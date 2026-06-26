@@ -236,7 +236,7 @@ const styles = {
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'background 0.2s' },
   
-  // Estilos de la tabla
+  // Estilos de la tabla 5x555
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white' },
   th: { padding: '12px 15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '13px', color: '#9CA3AF' },
   tr: { borderBottom: '1px solid #1F2937', transition: 'background 0.2s' },
