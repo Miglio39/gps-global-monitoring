@@ -15,13 +15,14 @@ export default function Login() {
 
     try {
       // CAMBIO CLAVE: Usamos la ruta absoluta directa a tu servidor Traccar en Contabo
-      const response = await fetch('http://37.60.246.22:8082/api/session', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/x-www-form-urlencoded' 
-        },
-        body: new URLSearchParams({ email: email, password: password })
-      });
+     // Cambia la línea del fetch por esta:
+const response = await fetch('https://api.labtesting.online/api/session', {
+  method: 'POST',
+  headers: { 
+    'Content-Type': 'application/x-www-form-urlencoded' 
+  },
+  body: new URLSearchParams({ email: email, password: password })
+});
 
       if (response.ok) {
         // Autenticación exitosa
