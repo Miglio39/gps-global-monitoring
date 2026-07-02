@@ -34,8 +34,7 @@ export default function Dashboard() {
       try {
         const headers = { 'Authorization': `Basic ${token}` };
         const [resDevices, resPositions] = await Promise.all([
-          fetch('https://api.labtesting.online/api/devices', { headers }), 
-          fetch('https://api.labtesting.online/api/positions', { headers })
+          fetch('https://api.labtesting.online/api/devices', { headers }), fetch('https://api.labtesting.online/api/positions', { headers })
         ]);
 
         if (resDevices.status === 401) { handleLogout(); return; }
@@ -66,9 +65,9 @@ export default function Dashboard() {
 
   return (
     <>
-      {/* INYECCIÓN DE ESTILOS RESPONSIVE */}
       <style>{`
-        .layout-container {
+        /* ESTILOS BASE (ESCRITORIO) - Manteniendo tus diseños originales */
+        .layout-main {
           display: flex;
           height: 100vh;
           width: 100vw;
@@ -76,93 +75,95 @@ export default function Dashboard() {
           color: #9CA3AF;
           font-family: 'Inter', sans-serif;
           overflow: hidden;
-          flex-direction: column-reverse; /* MÓVIL: menú abajo */
+          flex-direction: row; 
         }
         
-        .sidebar-nav {
-          width: 100%;
-          height: 60px;
+        .sidebar {
           background-color: #111827;
-          border-top: 1px solid #1F2937;
           display: flex;
-          flex-direction: row;
           align-items: center;
-          justify-content: space-around;
-          padding: 0 10px;
-          z-index: 50;
+          z-index: 10;
+          width: 35px;
+          flex-direction: column;
+          border-right: 1px solid #1F2937;
+          padding: 15px 0;
         }
 
-        .nav-menu-container {
+        .logo-container {
+          margin-bottom: 30px;
           display: flex;
-          flex-direction: row;
-          gap: 12px;
-          width: 100%;
-          justify-content: space-around;
+          justify-content: center;
         }
 
-        .desktop-only {
-          display: none;
-        }
-
-        .main-content {
+        .nav-menu {
           flex: 1;
           display: flex;
+          width: 100%;
           flex-direction: column;
-          height: calc(100vh - 60px); /* Resta el alto del menú en móvil */
-          overflow: hidden;
+          gap: 12px;
         }
 
-        /* MEDIA QUERY PARA ESCRITORIO (Pantallas > 768px) */
-        @media (min-width: 768px) {
-          .layout-container {
-            flex-direction: row; /* ESCRITORIO: menú a la izquierda */
+        .user-panel {
+          display: flex;
+          align-items: center;
+          flex-direction: column;
+          gap: 15px;
+          padding-top: 15px;
+          border-top: 1px solid #1F2937;
+          width: 100%;
+        }
+
+        /* DISEÑO RESPONSIVE (MÓVIL) */
+        @media (max-width: 768px) {
+          .layout-main {
+            flex-direction: column-reverse; /* Pasa la barra a la parte inferior */
           }
           
-          .sidebar-nav {
-            width: 45px;
-            height: 100vh;
-            border-top: none;
-            border-right: 1px solid #1F2937;
-            flex-direction: column;
-            padding: 15px 0;
-            justify-content: flex-start;
-          }
-
-          .nav-menu-container {
-            flex-direction: column;
-          }
-
-          .desktop-only {
-            display: flex;
-          }
-
-          .user-controls {
-            margin-top: auto;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #1F2937;
+          .sidebar {
             width: 100%;
+            height: 60px;
+            flex-direction: row;
+            border-right: none;
+            border-top: 1px solid #1F2937;
+            padding: 0 10px;
+            justify-content: space-between;
           }
 
-          .main-content {
-            height: 100vh;
+          .logo-container {
+            display: none; /* Oculta el logo en el celular para dar espacio a los iconos */
+          }
+
+          .nav-menu {
+            flex-direction: row;
+            justify-content: space-around;
+            align-items: center;
+            gap: 5px;
+            height: 100%;
+          }
+
+          .user-panel {
+            flex-direction: row;
+            width: auto;
+            padding-top: 0;
+            border-top: none;
+            border-left: 1px solid #1F2937;
+            padding-left: 10px;
+            margin-left: 5px;
+            height: 100%;
           }
         }
       `}</style>
 
-      <div className="layout-container">
+      <div className="layout-main">
         
-        {/* BARRA DE NAVEGACIÓN ADAPTABLE */}
-        <aside className="sidebar-nav">
+        {/* SIDEBAR ADAPTADO CON CLASES CSS */}
+        <aside className="sidebar">
           
-          <div className="desktop-only" style={{ marginBottom: '30px', justifyContent: 'center' }} title="Global GPS Monitor">
+          <div className="logo-container" title="Global GPS Monitor">
             <img src="/logo.png" alt="Logo" style={{ width: '22px', filter: 'drop-shadow(0px 2px 4px rgba(37, 99, 235, 0.7))' }} />
           </div>
 
-          <nav className="nav-menu-container">
+          <nav className="nav-menu">
             <div onClick={() => setActiveTab('dashboard')} title="Dashboard en Vivo" style={{...styles.navItem, ...(activeTab === 'dashboard' ? styles.navItemActive : {})}}>
               <MenuIcon path="M3 3h7v9H3z M14 3h7v5h-7z M14 12h7v9h-7z M3 16h7v5H3z" /> 
             </div>
@@ -175,6 +176,7 @@ export default function Dashboard() {
               <MenuIcon path="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /> 
             </div>
 
+            {/* NUEVO MÓDULO DE RUTAS LABORALES */}
             <div onClick={() => setActiveTab('workRoutes')} title="Informe Rutas Laborales" style={{...styles.navItem, ...(activeTab === 'workRoutes' ? styles.navItemActive : {})}}>
               <MenuIcon path="M2 9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /> 
             </div>
@@ -184,13 +186,13 @@ export default function Dashboard() {
             </div>
             
             {currentUser?.administrator && (
-              <div onClick={() => setActiveTab('admin')} title="Panel de Administración" style={{...styles.navItem, ...(activeTab === 'admin' ? styles.navItemActive : {}), color: activeTab === 'admin' ? 'white' : '#F59E0B' }}>
+              <div onClick={() => setActiveTab('admin')} title="Panel de Administración" style={{...styles.navItem, ...(activeTab === 'admin' ? styles.navItemActive : {}), color: activeTab === 'admin' ? 'white' : '#F59E0B', marginTop: window.innerWidth > 768 ? '15px' : '0' }}>
                 <MenuIcon path="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /> 
               </div>
             )}
           </nav>
 
-          <div className="desktop-only user-controls">
+          <div className="user-panel">
             <div title={currentUser ? `${currentUser.name} (${currentUser.administrator ? 'Administrador' : 'Cliente'})` : 'Cargando...'} style={{ backgroundColor: '#2563EB', color: 'white', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold', fontSize: '12px', cursor: 'help' }}>
               {currentUser ? currentUser.name.charAt(0).toUpperCase() : 'U'}
             </div>
@@ -199,11 +201,11 @@ export default function Dashboard() {
         </aside>
 
         {/* CONTENIDO PRINCIPAL */}
-        <div className="main-content">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {activeTab === 'dashboard' && <LiveDashboard devices={devices} positions={positions} />}
           {activeTab === 'route' && <RoutePlayback devices={devices} token={token} />}
           {activeTab === 'report' && <Reports devices={devices} token={token} />}
-          {activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />}
+          {activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
           {activeTab === 'alerts' && <Alerts devices={devices} token={token} />} 
           {activeTab === 'admin' && <AdminPanel devices={devices} token={token} currentUser={currentUser} />}
         </div>
