@@ -14,8 +14,8 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      // 1. Traccar EXIGE que el inicio de sesión sea por POST con formato form-urlencoded
-      const response = await fetch('/api/session', {
+      // CAMBIO CLAVE: Usamos la ruta absoluta directa a tu servidor Traccar en Contabo
+      const response = await fetch('http://37.60.246.22:8082/api/session', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/x-www-form-urlencoded' 
