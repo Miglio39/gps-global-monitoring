@@ -34,7 +34,7 @@ export default function Dashboard() {
       try {
         const headers = { 'Authorization': `Basic ${token}` };
         const [resDevices, resPositions] = await Promise.all([
-          fetch('/api/devices', { headers }), fetch('/api/positions', { headers })
+          fetch('https://api.labtesting.online/api/devices', { headers }), fetch('https://api.labtesting.online/api/positions', { headers })
         ]);
 
         if (resDevices.status === 401) { handleLogout(); return; }
