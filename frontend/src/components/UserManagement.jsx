@@ -12,7 +12,7 @@ export default function UserManagement({ token, devices }) {
   }, [token]);
 
   const fetchUsers = () => {
-    fetch('/api/users', { headers: { 'Authorization': `Basic ${token}` } })
+    fetch('https://api.labtesting.online/api/users', { headers: { 'Authorization': `Basic ${token}` } })
       .then(res => res.json())
       .then(data => setAllUsers(data))
       .catch(err => console.error("Error cargando usuarios:", err));
@@ -27,7 +27,7 @@ export default function UserManagement({ token, devices }) {
         password: userForm.password
     };
 
-    const res = await fetch('/api/users', { 
+    const res = await fetch('https://api.labtesting.online/api/users', { 
         method: 'POST', 
         headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
         body: JSON.stringify(payload) 
@@ -44,7 +44,7 @@ export default function UserManagement({ token, devices }) {
 
   const handleAssignPermissions = async (e) => {
     e.preventDefault();
-    const res = await fetch('/api/permissions', { 
+    const res = await fetch('https://api.labtesting.online/api/permissions', { 
         method: 'POST', 
         headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ userId: parseInt(assignForm.userId), deviceId: parseInt(assignForm.deviceId) }) 

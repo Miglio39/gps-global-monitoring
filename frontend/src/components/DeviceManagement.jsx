@@ -29,7 +29,7 @@ export default function DeviceManagement({ token, devices }) {
             setEditingDeviceId(null);
         }
     } else {
-        const res = await fetch('/api/devices', { 
+        const res = await fetch('https://api.labtesting.online/api/devices', { 
             method: 'POST', 
             headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
             body: JSON.stringify(payload) 
