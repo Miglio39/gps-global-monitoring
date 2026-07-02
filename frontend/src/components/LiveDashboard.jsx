@@ -15,10 +15,22 @@ function ChangeView({ center }) {
 export default function LiveDashboard({ devices, positions }) {
   const [map, setMap] = useState(null); 
   const [hasInitialCentered, setHasCentered] = useState(false);
-  
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all'); 
-  const [isListOpen, setIsListOpen] = useState(true);
+  
+  // LOGICA RESPONSIVE: Detectar celular y controlar el panel
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [isListOpen, setIsListOpen] = useState(window.innerWidth >= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setIsListOpen(false); // Cierra la lista si la pantalla se hace pequeña
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Token para comandos
   const token = localStorage.getItem('traccar_token');
@@ -71,11 +83,11 @@ export default function LiveDashboard({ devices, positions }) {
         })
       });
 
-      if (res.ok) {
+      if (response.ok) {
         alert(`✅ Comando enviado a "${deviceName}".`);
       } else {
-        const errorText = await res.text();
-        alert(`❌ Error en Servidor Traccar (${res.status}): ${errorText}`);
+        const errorText = await response.text();
+        alert(`❌ Error en Servidor Traccar (${response.status}): ${errorText}`);
       }
     } catch (error) {
       console.error(error);
@@ -103,7 +115,7 @@ export default function LiveDashboard({ devices, positions }) {
     const isMoving = speed > 0;
     let color = '#8B5CF6'; 
     if (status !== 'online') color = '#EF4444'; 
-    else if (isMoving) color = '#10B981'; 
+    else if (isMoving) color = '#10B981';
 
     const html = `
       <div style="display: flex; align-items: center; margin-left: -15px; margin-top: -38px;">
@@ -181,8 +193,8 @@ export default function LiveDashboard({ devices, positions }) {
         </MapContainer>
       </div>
 
-      {/* KPIs */}
-      <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', gap: '8px', pointerEvents: 'none' }}>
+      {/* KPIs RESPONSIVE (flexWrap y maxWidth añadidos) */}
+      <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', flexWrap: 'wrap', gap: '8px', pointerEvents: 'none', maxWidth: 'calc(100vw - 30px)' }}>
         <div onClick={() => setFilter('all')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'all' ? '1.5px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)'}}>
           <span style={styles.kpiLabel}>Total</span><span style={styles.kpiValue}>{totalCount}</span>
         </div>
@@ -200,17 +212,55 @@ export default function LiveDashboard({ devices, positions }) {
         </div>
       </div>
 
-      {/* PANEL FLOTANTE DE UNIDADES - REDISEÑO TÁCTICO */}
-      <div style={{ position: 'absolute', top: 15, right: 15, bottom: 15, width: isListOpen ? '290px' : '44px', backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, display: 'flex', flexDirection: 'column', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+      {/* PANEL FLOTANTE DE UNIDADES - RESPONSIVE (CUADRITO O LISTA) */}
+      <div style={{ 
+        position: 'absolute', 
+        top: 15, 
+        right: 15, 
+        bottom: isListOpen ? 15 : 'auto', 
+        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '290px') : '44px', 
+        height: isListOpen ? 'auto' : '44px',
+        maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
+        backgroundColor: 'rgba(15, 23, 42, 0.85)', 
+        backdropFilter: 'blur(16px)', 
+        borderRadius: '14px', 
+        border: '1px solid rgba(255,255,255,0.08)', 
+        zIndex: 1000, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+        overflow: 'hidden' 
+      }}>
         
-        <div style={{ padding: '14px 16px', borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' }}>
+        <div style={{ 
+          padding: isListOpen ? '14px 16px' : '0', 
+          height: isListOpen ? 'auto' : '100%',
+          borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', 
+          display: 'flex', 
+          justifyContent: isListOpen ? 'space-between' : 'center', 
+          alignItems: 'center' 
+        }}>
           {isListOpen && (
             <div>
               <h3 style={{ margin: 0, color: '#F3F4F6', fontSize: '14px', fontWeight: '700' }}>Flota Activa ({filteredDevices.length})</h3>
               <p style={{ margin: '2px 0 0 0', color: '#9CA3AF', fontSize: '10px', textTransform: 'uppercase', fontWeight: '600' }}>Filtro: {filter}</p>
             </div>
           )}
-          <button onClick={() => setIsListOpen(!isListOpen)} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '14px', width: '28px', height: '28px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+          <button onClick={() => setIsListOpen(!isListOpen)} style={{ 
+            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', 
+            border: 'none', 
+            color: '#9CA3AF', 
+            cursor: 'pointer', 
+            fontSize: isListOpen ? '14px' : '18px', 
+            width: isListOpen ? '28px' : '100%', 
+            height: isListOpen ? '28px' : '100%', 
+            borderRadius: '8px', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            transition: 'all 0.2s' 
+          }}>
             {isListOpen ? '✕' : '🚚'}
           </button>
         </div>
