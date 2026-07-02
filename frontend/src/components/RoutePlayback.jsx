@@ -114,8 +114,8 @@ export default function RoutePlayback({ devices, token }) {
       const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
 
       const [routeRes, stopsRes] = await Promise.all([
-        fetch(`/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
-        fetch(`/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
+        fetch(`https://api.labtesting.online/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
+        fetch(`https://api.labtesting.online/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
       ]);
 
       if(routeRes.ok && stopsRes.ok) {

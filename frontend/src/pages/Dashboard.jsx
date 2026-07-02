@@ -110,7 +110,7 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      {/* CONTENIDO PRINCIPAL */}
+      {/* CONTENIDO PRINCIPALL */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {activeTab === 'dashboard' && <LiveDashboard devices={devices} positions={positions} />}
         {activeTab === 'route' && <RoutePlayback devices={devices} token={token} />}
