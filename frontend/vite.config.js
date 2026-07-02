@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: './', // <--- Esta es la línea que soluciona el pantallazo blanco
   plugins: [react()],
   server: {
     proxy: {
