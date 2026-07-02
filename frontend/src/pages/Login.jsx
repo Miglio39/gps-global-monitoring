@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE } from '../config'; // <-- 1. Importas la variable central 
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -14,15 +15,15 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      // CAMBIO CLAVE: Usamos la ruta absoluta directa a tu servidor Traccar en Contabo
-     // Cambia la línea del fetch por esta:
-const response = await fetch('https://api.labtesting.online/api/session', {
-  method: 'POST',
-  headers: { 
-    'Content-Type': 'application/x-www-form-urlencoded' 
-  },
-  body: new URLSearchParams({ email: email, password: password })
-});
+      // 2. Inyectas la variable antes de la ruta relativa
+      const response = await fetch(`${API_BASE}/api/session`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/x-www-form-urlencoded' 
+        },
+        body: new URLSearchParams({ email: email, password: password })
+      });
+      // ... el resto de tu código queda igual
 
       if (response.ok) {
         // Autenticación exitosa
