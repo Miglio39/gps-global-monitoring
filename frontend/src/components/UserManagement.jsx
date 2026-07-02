@@ -5,6 +5,7 @@ export default function UserManagement({ token, devices }) {
   const [userForm, setUserForm] = useState({ name: '', cedula: '', usuario: '', password: '' });
   const [assignForm, setAssignForm] = useState({ userId: '', deviceId: '' });
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
+  
 
   useEffect(() => {
     fetchUsers();

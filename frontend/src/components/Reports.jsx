@@ -7,6 +7,7 @@ export default function Reports({ devices, token }) {
   const [routeData, setRouteData] = useState([]);
   const [summaryData, setSummaryData] = useState([]); // Ahora es un array para soportar múltiples días
   const [isFetching, setIsFetching] = useState(false);
+  
 
   // Selector dinámico de rangos de fecha
   const handleRangeChange = (rangeValue) => {

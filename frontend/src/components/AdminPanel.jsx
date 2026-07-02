@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import UserManagement from './UserManagement';
 import DeviceManagement from './DeviceManagement';
 
+
 export default function AdminPanel({ devices, token, currentUser }) {
   const [activeTab, setActiveTab] = useState('usuarios');
 

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { API_BASE } from '../config'; 
+// (Asegúrate de que la ruta '../config' apunte a donde guardaste el archivo config.js)
 
 // Componente para forzar centrado de cámara
 function ChangeView({ center }) {

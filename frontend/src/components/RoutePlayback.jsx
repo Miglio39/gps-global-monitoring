@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from '
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+
 // 1. NUEVO: Manejador Inteligente de la Cámara
 function MapInteractions({ center, autoFollow, setAutoFollow }) {
   const map = useMapEvents({

@@ -4,6 +4,7 @@ import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+
 // Función auxiliar para centrar el mapa
 function ChangeView({ center }) {
   const map = useMap();
