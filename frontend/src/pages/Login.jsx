@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // 1. Importamos useEffect
 import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
-  // Cambiamos 'email' por 'identifier' para que sea más semántico (Usuario o Correo)
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false); // Estado para ver/ocultar clave
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
+
+  // 2. EFECTO DE AUTOLOGIN: Comprueba si ya hay una sesión activa al cargar la pantalla
+  useEffect(() => {
+    const token = localStorage.getItem('traccar_token');
+    if (token) {
+      // Si el token existe, el usuario ya inició sesión previamente. 
+      // Lo enviamos directo al dashboard sin pedir credenciales.
+      navigate('/dashboard');
+    }
+  }, [navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -16,7 +25,6 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      // Traccar recibe el parámetro como 'email', pero acepta tanto usuario como correo
       const response = await fetch('https://api.labtesting.online/api/session', {
         method: 'POST',
         headers: { 
@@ -26,10 +34,8 @@ export default function Login() {
       });
 
       if (response.ok) {
-        // Autenticación exitosa
         const userData = await response.json();
         
-        // Creamos el token Basic Auth para usarlo en el Dashboard
         const basicAuth = btoa(`${identifier}:${password}`);
         localStorage.setItem('traccar_token', basicAuth);
         localStorage.setItem('traccar_user', JSON.stringify(userData));
@@ -48,7 +54,6 @@ export default function Login() {
 
   return (
     <div style={styles.container}>
-      {/* INYECCIÓN DE CSS PARA LAS ANIMACIONES */}
       <style>
         {`
           @keyframes floatLogo {
@@ -69,7 +74,7 @@ export default function Login() {
         `}
       </style>
 
-      <div style={{...styles.loginCard}} className="animated-card">
+      <div style={styles.loginCard} className="animated-card">
         
         <div style={styles.header}>
           <img 
@@ -91,7 +96,6 @@ export default function Login() {
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.inputGroup}>
             <label style={styles.label}>Usuario o Correo Electrónico</label>
-            {/* Cambiado a type="text" para permitir nombres de usuario sin "@" */}
             <input 
               type="text" 
               placeholder="admin o admin@ejemplo.com" 
@@ -113,7 +117,6 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 style={{...styles.input, width: '100%', paddingRight: '45px', boxSizing: 'border-box'}}
               />
-              {/* Botón para ver/ocultar contraseña con íconos SVG profesionales */}
               <button 
                 type="button" 
                 onClick={() => setShowPassword(!showPassword)}
@@ -142,7 +145,6 @@ export default function Login() {
   );
 }
 
-// Estilos de la tarjeta de Login
 const styles = {
   container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px' },
   loginCard: { backgroundColor: '#FFFFFF', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '100%', maxWidth: '420px', textAlign: 'center' },
