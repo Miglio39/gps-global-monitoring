@@ -57,9 +57,15 @@ export default function LiveDashboard({ devices, positions }) {
   }, [positions, hasInitialCentered, map]);
 
 
-  // NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia)
+// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia)
   useEffect(() => {
+    // 1. Solicitar permisos de notificación al cargar o activar el modo
+    if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+      Notification.requestPermission();
+    }
+
     let alarmTriggered = false;
+    let deviceNameTriggered = '';
 
     Object.keys(armedDevices).forEach(deviceIdStr => {
       const deviceId = parseInt(deviceIdStr);
@@ -69,21 +75,33 @@ export default function LiveDashboard({ devices, positions }) {
       // Si está vigilado y detecta encendido (ignition: true)
       if (isArmed && pos && pos.attributes && pos.attributes.ignition) {
         alarmTriggered = true;
-        const deviceName = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+        deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
         
-        // 1. Mostrar Alerta en pantalla
-        alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceName}" ha sido ENCENDIDO mientras estaba en modo vigilancia.`);
-        
-        // 2. Desactivar la alarma para este vehículo (evita bucle infinito)
+        // Desactivar la alarma para este vehículo (evita bucle infinito)
         setArmedDevices(prev => ({...prev, [deviceId]: false}));
       }
     });
 
-    // 3. Reproducir sonido si se activó la alarma
     if (alarmTriggered) {
-      // Usamos un sonido público gratuito, puedes cambiar la URL por un '/alarma.mp3' de tu servidor
-      const audio = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
-      audio.play().catch(e => console.error("El navegador bloqueó el audio:", e));
+      // 2. Disparar Notificación Nativa del Sistema (Banner superior)
+      if (Notification.permission === "granted") {
+        new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
+          body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
+          icon: '/favicon.ico', // Cambia por la ruta de tu logo
+          vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500] // Patrón de vibración agresivo
+        });
+      } else {
+        // Fallback visual si no hay permisos
+        alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+      }
+
+      // 3. Reproducir un sonido de alarma agresivo (Asegúrate de poner este archivo en tu carpeta 'public')
+      // Como alternativa temporal, dejo un enlace a un sonido fuerte gratuito.
+      const alarmSound = new Audio('/alarma-agresiva.mp3'); // <-- RUTA DE TU MP3
+      // const alarmSound = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg'); // Alternativa web
+      
+      alarmSound.loop = false; // Cambia a true si quieres que suene hasta que lo apaguen
+      alarmSound.play().catch(e => console.error("El navegador bloqueó el audio por falta de interacción:", e));
     }
   }, [positions, armedDevices, devices]);
 
