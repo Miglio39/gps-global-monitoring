@@ -3,18 +3,15 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from '
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-
-// 1. NUEVO: Manejador Inteligente de la Cámara
+// Manejador Inteligente de la Cámara
 function MapInteractions({ center, autoFollow, setAutoFollow }) {
   const map = useMapEvents({
     dragstart: () => {
-      // Si el usuario mueve el mapa manualmente, apagamos el seguimiento
       if (autoFollow) setAutoFollow(false);
     }
   });
 
   useEffect(() => {
-    // Solo enfocamos el mapa si el auto-seguimiento está encendido
     if (autoFollow && center) {
       map.setView(center, map.getZoom(), { animate: false });
     }
@@ -23,7 +20,7 @@ function MapInteractions({ center, autoFollow, setAutoFollow }) {
   return null;
 }
 
-// Icono personalizado para las Paradas (> 5 min)
+// Iconos personalizados
 const stopIcon = new L.DivIcon({
   html: `<div style="background-color: #3B82F6; color: white; border: 2px solid white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">P</div>`,
   className: 'custom-stop-icon',
@@ -31,7 +28,6 @@ const stopIcon = new L.DivIcon({
   iconAnchor: [12, 12]
 });
 
-// Icono personalizado para el Vehículo en movimiento
 const movingIcon = new L.DivIcon({
   html: `<div style="background-color: #10B981; border: 3px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);"></div>`,
   className: 'custom-moving-icon',
@@ -52,10 +48,18 @@ export default function RoutePlayback({ devices, token }) {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
   
-  // NUEVO ESTADO: Controla si el mapa sigue al vehículo
   const [autoFollow, setAutoFollow] = useState(true);
 
-  // Configuración inicial de fechas por defecto (Hoy)
+  // NUEVO: Estado para diseño responsive
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    handleResize(); // Revisión inicial
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   useEffect(() => {
     handleRangeChange('today');
     // eslint-disable-next-line
@@ -67,7 +71,6 @@ export default function RoutePlayback({ devices, token }) {
       interval = setInterval(() => {
         setPlaybackIndex(prev => {
           if (prev >= routeData.length - 1) { setIsPlaying(false); return prev; }
-          // Actualizamos la posición del vehículo, el MapInteractions decidirá si centrar la pantalla o no
           setMapCenter([routeData[prev + 1].latitude, routeData[prev + 1].longitude]);
           return prev + 1;
         });
@@ -106,7 +109,7 @@ export default function RoutePlayback({ devices, token }) {
     setIsFetching(true);
     setIsPlaying(false); 
     setPlaybackIndex(0);
-    setAutoFollow(true); // Al cargar nueva ruta, volvemos a anclar la cámara
+    setAutoFollow(true); 
     
     try {
       const fromISO = new Date(reportConfig.from).toISOString();
@@ -114,15 +117,15 @@ export default function RoutePlayback({ devices, token }) {
       const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
 
       const [routeRes, stopsRes] = await Promise.all([
-        fetch(`https://api.labtesting.online/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
-        fetch(`https://api.labtesting.online/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
+        fetch(`/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
+        fetch(`/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
       ]);
 
       if(routeRes.ok && stopsRes.ok) {
         const rData = await routeRes.json();
         const sData = await stopsRes.json();
         
-        // FILTRO DE PARADAS: Solo paradas >= 5 minutos (300,000 ms)
+        // 1. FILTRO DE PARADAS RECUPERADO (Solo paradas mayores a 5 min = 300000ms)
         const filteredStops = sData.filter(stop => stop.duration >= 300000);
         
         setRouteData(rData);
@@ -136,7 +139,6 @@ export default function RoutePlayback({ devices, token }) {
     setIsFetching(false);
   };
 
-  // SEGMENTACIÓN INTELIGENTE DE RUTA (Línea roja si velocidad > 80 km/h)
   const coloredRouteSegments = useMemo(() => {
     if (routeData.length === 0) return [];
     
@@ -184,10 +186,11 @@ export default function RoutePlayback({ devices, token }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%', backgroundColor: '#0B1120' }}>
+    // CONTENEDOR PRINCIPAL: Cambia a 'column' en móvil y a 'row' en escritorio
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', width: '100%', backgroundColor: '#0B1120', overflow: isMobile ? 'auto' : 'hidden' }}>
       
       {/* PANEL LATERAL DE CONTROLES */}
-      <aside style={{ width: '320px', backgroundColor: '#111827', padding: '20px', display: 'flex', flexDirection: 'column', borderRight: '1px solid #1F2937', zIndex: 2, overflowY: 'auto' }}>
+      <aside style={{ width: isMobile ? '100%' : '320px', backgroundColor: '#111827', padding: '20px', display: 'flex', flexDirection: 'column', borderRight: isMobile ? 'none' : '1px solid #1F2937', borderBottom: isMobile ? '1px solid #1F2937' : 'none', zIndex: 2, overflowY: 'auto' }}>
         <h2 style={{ color: 'white', margin: '0 0 20px 0', fontSize: '18px' }}>📍 Repetición Visual</h2>
         
         <form onSubmit={handleFetchRoute} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -213,11 +216,11 @@ export default function RoutePlayback({ devices, token }) {
             <>
               <div>
                 <label style={styles.label}>Desde:</label>
-                <input type="datetime-local" required value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} />
+                <input type="datetime-local" required step="1800" value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} />
               </div>
               <div>
                 <label style={styles.label}>Hasta:</label>
-                <input type="datetime-local" required value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} />
+                <input type="datetime-local" required step="1800" value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} />
               </div>
             </>
           )}
@@ -236,7 +239,6 @@ export default function RoutePlayback({ devices, token }) {
                   {isPlaying ? '⏸️ Pausa' : '▶️ Play'}
                 </button>
                 
-                {/* BOTÓN DE RE-CENTRAR: Solo aparece si el usuario soltó la cámara arrastrando el mapa */}
                 {!autoFollow && (
                   <button 
                     onClick={() => { 
@@ -262,7 +264,7 @@ export default function RoutePlayback({ devices, token }) {
                 const newIdx = Number(e.target.value);
                 setPlaybackIndex(newIdx); 
                 setIsPlaying(false); 
-                setAutoFollow(true); // Al mover la barra, centramos de nuevo
+                setAutoFollow(true); 
                 setMapCenter([routeData[newIdx].latitude, routeData[newIdx].longitude]);
               }} 
               style={{ width: '100%', marginBottom: '10px', cursor: 'pointer' }} 
@@ -289,7 +291,7 @@ export default function RoutePlayback({ devices, token }) {
                   style={styles.stopCard} 
                   onClick={() => { 
                     setMapCenter([stop.latitude, stop.longitude]);
-                    setAutoFollow(false); // Despegamos la cámara para que inspeccione la parada tranquilo
+                    setAutoFollow(false); 
                   }}
                 >
                   <div style={{ color: 'white', fontSize: '13px', fontWeight: 'bold' }}>Parada #{i + 1}</div>
@@ -307,25 +309,22 @@ export default function RoutePlayback({ devices, token }) {
       </aside>
 
       {/* ÁREA DEL MAPA */}
-      <div style={{ flex: 1, position: 'relative', zIndex: 0 }}>
+      <div style={{ flex: 1, position: 'relative', zIndex: 0, minHeight: isMobile ? '50vh' : 'auto' }}>
         <MapContainer center={mapCenter} zoom={14} style={{ height: '100%', width: '100%' }}>
-          {/* Componente Invisible que vigila si el usuario toca el mapa */}
           <MapInteractions center={mapCenter} autoFollow={autoFollow} setAutoFollow={setAutoFollow} />
           
           <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
           
-          {/* Tramos de la ruta segmentados por velocidad */}
           {coloredRouteSegments.map((segment, idx) => (
             <Polyline 
               key={idx} 
               positions={segment.positions} 
-              color={segment.isOverspeed ? "#EF4444" : "#3B82F6"} // Rojo si > 80 km/h
+              color={segment.isOverspeed ? "#EF4444" : "#3B82F6"}
               weight={segment.isOverspeed ? 6 : 4} 
               opacity={0.8} 
             />
           ))}
 
-          {/* Marcador del vehículo reproduciéndose */}
           {routeData.length > 0 && (
             <Marker position={[routeData[playbackIndex].latitude, routeData[playbackIndex].longitude]} icon={movingIcon}>
               <Popup>
@@ -340,7 +339,6 @@ export default function RoutePlayback({ devices, token }) {
             </Marker>
           )}
 
-          {/* Marcadores de Paradas */}
           {stopsData.length > 0 && stopsData.map((stop, i) => (
             <Marker key={i} position={[stop.latitude, stop.longitude]} icon={stopIcon}>
               <Popup>
@@ -362,16 +360,7 @@ export default function RoutePlayback({ devices, token }) {
 
 const styles = {
   label: { color:'#9CA3AF', fontSize:'13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
-  input: { 
-    backgroundColor: '#0B1120', 
-    border: '1px solid #1F2937', 
-    borderRadius: '6px', 
-    padding: '10px', 
-    color: 'white', 
-    width: '100%', 
-    boxSizing: 'border-box',
-    colorScheme: 'dark' // <-- ESTA ES LA LÍNEA MÁGICA
-  },
+  input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', boxSizing: 'border-box', colorScheme: 'dark' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', width: '100%', marginTop: '5px', transition: 'background-color 0.2s' },
   playbackContainer: { backgroundColor: '#0B1120', padding: '15px', borderRadius: '8px', marginTop: '20px', border: '1px solid #1F2937' },
   playBtn: { backgroundColor: '#10B981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },

@@ -24,11 +24,21 @@ export default function Dashboard() {
   // --- LÓGICA PARA INSTALAR COMO APP MÓVIL (PWA) ---
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   
+  // NUEVO: Detector de si es un celular
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
+
   useEffect(() => {
+    // Escuchar el evento de instalación de PWA
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
-      setDeferredPrompt(e); // Guarda el evento para detonarlo cuando el usuario haga clic
+      setDeferredPrompt(e); 
     });
+
+    // Escuchar cuando la pantalla cambie de tamaño
+    const handleResize = () => setIsMobileView(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const handleInstallApp = async () => {
@@ -36,7 +46,7 @@ export default function Dashboard() {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
       if (outcome === 'accepted') {
-        setDeferredPrompt(null); // Oculta el botón si aceptó
+        setDeferredPrompt(null); 
       }
     }
   };
@@ -120,7 +130,7 @@ export default function Dashboard() {
         .nav-menu { flex: 1; display: flex; width: 100%; flex-direction: column; gap: 12px; }
         .user-panel { display: flex; align-items: center; flex-direction: column; gap: 15px; padding-top: 15px; border-top: 1px solid #1F2937; width: 100%; }
 
-        /* DISEÑO RESPONSIVE (MÓVIL) - CORRECCIÓN DE MENÚ OCULTO */
+        /* DISEÑO RESPONSIVE (MÓVIL) */
         @media (max-width: 768px) {
           .layout-main {
             flex-direction: column; 
@@ -140,7 +150,7 @@ export default function Dashboard() {
           }
 
           .main-content {
-            height: calc(100dvh - 60px); /* 100dvh soluciona el problema de la barra del navegador */
+            height: calc(100dvh - 60px); 
             width: 100%;
           }
 
@@ -169,7 +179,7 @@ export default function Dashboard() {
 
       <div className="layout-main">
         
-        {/* SIDEBAR ADAPTADO (Fijo abajo en móviles) */}
+        {/* SIDEBAR ADAPTADO */}
         <aside className="sidebar">
           <div className="logo-container" title="Global GPS Monitor">
             <img src="/logo.png" alt="Logo" style={{ width: '22px', filter: 'drop-shadow(0px 2px 4px rgba(37, 99, 235, 0.7))' }} />
@@ -206,11 +216,11 @@ export default function Dashboard() {
           </div>
         </aside>
 
-        {/* CONTENIDO PRINCIPAL Y BANNER DE INSTALACIÓN */}
+        {/* CONTENIDO PRINCIPAL */}
         <div className="main-content">
           
-          {/* BANNER FLOTANTE PARA INSTALAR LA APP (Solo sale en celular si no está instalada) */}
-          {deferredPrompt && (
+          {/* AQUI ESTÁ LA MAGIA: Solo se muestra si hay deferredPrompt Y la pantalla es de celular */}
+          {deferredPrompt && isMobileView && (
             <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
               <button onClick={handleInstallApp} style={{ backgroundColor: 'white', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Descargar</button>
