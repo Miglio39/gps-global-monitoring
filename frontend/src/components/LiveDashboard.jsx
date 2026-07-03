@@ -56,20 +56,19 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia) BLINDADO 🛡️
+// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia) BLINDADO PARA MÓVILES 🛡️
   useEffect(() => {
     try {
-      // 1. Verificación de seguridad: ¿El navegador soporta Notificaciones Nativas?
       const hasNotificationAPI = 'Notification' in window;
 
+      // Solicitar permisos sin interrumpir el flujo si falla
       if (hasNotificationAPI && Notification.permission !== "granted" && Notification.permission !== "denied") {
-        Notification.requestPermission();
+        Notification.requestPermission().catch(e => console.warn("Permisos ignorados", e));
       }
 
       let alarmTriggered = false;
       let deviceNameTriggered = '';
       
-      // Creamos una copia del estado para no mutarlo directamente en el ciclo
       const updatedArmedDevices = { ...armedDevices }; 
 
       Object.keys(armedDevices).forEach(deviceIdStr => {
@@ -82,38 +81,46 @@ export default function LiveDashboard({ devices, positions }) {
           alarmTriggered = true;
           deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
           
-          // Apagamos la vigilancia en nuestra copia de seguridad (evita bucle infinito)
+          // Apagamos la vigilancia para no entrar en bucle infinito
           updatedArmedDevices[deviceId] = false;
         }
       });
 
-      // 2. Si se disparó la alarma, ejecutamos las acciones UNA SOLA VEZ
       if (alarmTriggered) {
-        // Actualizamos el estado de vigilancia
+        // 1. Apagamos el botón de inmediato
         setArmedDevices(updatedArmedDevices);
 
-        // Intentamos enviar Notificación Nativa
-        if (hasNotificationAPI && Notification.permission === "granted") {
-          new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
-            body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
-            icon: '/favicon.ico', 
-            vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500] 
-          });
-        } else {
-          // Fallback seguro: Si no hay soporte, lanzamos el alert tradicional
-          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+        // 2. REPRODUCIR SONIDO PRIMERO (Blindado para que no detenga el código si falla)
+        try {
+          const alarmSound = new Audio('/alarma-agresiva.mp3'); 
+          alarmSound.loop = false;
+          alarmSound.play().catch(e => console.warn("Audio bloqueado por falta de interacción:", e));
+        } catch (audioErr) {
+          console.error("Error en el objeto Audio:", audioErr);
         }
 
-        // 3. Reproducir el sonido
-        const alarmSound = new Audio('/alarma-agresiva.mp3'); // Asegúrate de tener este archivo
-        alarmSound.loop = false;
-        alarmSound.play().catch(e => console.warn("El navegador bloqueó el audio automático:", e));
+        // 3. INTENTAR NOTIFICACIÓN CON 'PLAN B' DE EMERGENCIA
+        try {
+          if (hasNotificationAPI && Notification.permission === "granted") {
+            // Peligro: En Android/Chrome esto lanza "Illegal constructor" si no hay Service Worker
+            new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
+              body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
+              icon: '/favicon.ico', 
+              vibrate: [500, 250, 500, 250, 500] 
+            });
+          } else {
+            // Si el usuario no dio permisos, usamos la alerta nativa
+            alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+          }
+        } catch (notifError) {
+          // PLAN B: Si 'new Notification' colapsa (muy común en celulares), forzamos la alerta normal
+          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+        }
       }
     } catch (error) {
-      console.error("Se produjo un error inofensivo en la rutina de alarma:", error);
+      console.error("Error crítico general manejado:", error);
     }
   }, [positions, armedDevices, devices]);
-
 
 
   const totalCount = devices.length;
