@@ -56,54 +56,64 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-
-// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia)
+// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia) BLINDADO 🛡️
   useEffect(() => {
-    // 1. Solicitar permisos de notificación al cargar o activar el modo
-    if (Notification.permission !== "granted" && Notification.permission !== "denied") {
-      Notification.requestPermission();
-    }
+    try {
+      // 1. Verificación de seguridad: ¿El navegador soporta Notificaciones Nativas?
+      const hasNotificationAPI = 'Notification' in window;
 
-    let alarmTriggered = false;
-    let deviceNameTriggered = '';
+      if (hasNotificationAPI && Notification.permission !== "granted" && Notification.permission !== "denied") {
+        Notification.requestPermission();
+      }
 
-    Object.keys(armedDevices).forEach(deviceIdStr => {
-      const deviceId = parseInt(deviceIdStr);
-      const isArmed = armedDevices[deviceId];
-      const pos = positions[deviceId];
+      let alarmTriggered = false;
+      let deviceNameTriggered = '';
       
-      // Si está vigilado y detecta encendido (ignition: true)
-      if (isArmed && pos && pos.attributes && pos.attributes.ignition) {
-        alarmTriggered = true;
-        deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+      // Creamos una copia del estado para no mutarlo directamente en el ciclo
+      const updatedArmedDevices = { ...armedDevices }; 
+
+      Object.keys(armedDevices).forEach(deviceIdStr => {
+        const deviceId = parseInt(deviceIdStr);
+        const isArmed = armedDevices[deviceId];
+        const pos = positions[deviceId];
         
-        // Desactivar la alarma para este vehículo (evita bucle infinito)
-        setArmedDevices(prev => ({...prev, [deviceId]: false}));
-      }
-    });
+        // Si está vigilado y detecta encendido (ignition: true)
+        if (isArmed && pos && pos.attributes && pos.attributes.ignition) {
+          alarmTriggered = true;
+          deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+          
+          // Apagamos la vigilancia en nuestra copia de seguridad (evita bucle infinito)
+          updatedArmedDevices[deviceId] = false;
+        }
+      });
 
-    if (alarmTriggered) {
-      // 2. Disparar Notificación Nativa del Sistema (Banner superior)
-      if (Notification.permission === "granted") {
-        new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
-          body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
-          icon: '/favicon.ico', // Cambia por la ruta de tu logo
-          vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500] // Patrón de vibración agresivo
-        });
-      } else {
-        // Fallback visual si no hay permisos
-        alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
-      }
+      // 2. Si se disparó la alarma, ejecutamos las acciones UNA SOLA VEZ
+      if (alarmTriggered) {
+        // Actualizamos el estado de vigilancia
+        setArmedDevices(updatedArmedDevices);
 
-      // 3. Reproducir un sonido de alarma agresivo (Asegúrate de poner este archivo en tu carpeta 'public')
-      // Como alternativa temporal, dejo un enlace a un sonido fuerte gratuito.
-      const alarmSound = new Audio('/alarma-agresiva.mp3'); // <-- RUTA DE TU MP3
-      // const alarmSound = new Audio('https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg'); // Alternativa web
-      
-      alarmSound.loop = false; // Cambia a true si quieres que suene hasta que lo apaguen
-      alarmSound.play().catch(e => console.error("El navegador bloqueó el audio por falta de interacción:", e));
+        // Intentamos enviar Notificación Nativa
+        if (hasNotificationAPI && Notification.permission === "granted") {
+          new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
+            body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
+            icon: '/favicon.ico', 
+            vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500] 
+          });
+        } else {
+          // Fallback seguro: Si no hay soporte, lanzamos el alert tradicional
+          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+        }
+
+        // 3. Reproducir el sonido
+        const alarmSound = new Audio('/alarma-agresiva.mp3'); // Asegúrate de tener este archivo
+        alarmSound.loop = false;
+        alarmSound.play().catch(e => console.warn("El navegador bloqueó el audio automático:", e));
+      }
+    } catch (error) {
+      console.error("Se produjo un error inofensivo en la rutina de alarma:", error);
     }
   }, [positions, armedDevices, devices]);
+
 
 
   const totalCount = devices.length;
