@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+
+// Reparador automático del tamaño del mapa al ocultar el panel
+function MapResizer({ isMobilePanelOpen }) {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [isMobilePanelOpen, map]);
+  return null;
+}
 
 // Manejador Inteligente de la Cámara
 function MapInteractions({ center, autoFollow, setAutoFollow }) {
@@ -50,11 +62,9 @@ export default function RoutePlayback({ devices, token }) {
   
   const [autoFollow, setAutoFollow] = useState(true);
   
-  // Estados para UX Responsive
   const [isMobile, setIsMobile] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(true);
 
-  // Detector de pantalla
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
     handleResize();
@@ -133,12 +143,10 @@ export default function RoutePlayback({ devices, token }) {
         setStopsData(filteredStops);
 
         if (rData.length > 0) setMapCenter([rData[0].latitude, rData[0].longitude]);
-        
-        // Magia UX: Si es celular, cerramos el panel automáticamente al cargar
         if (isMobile) setIsMobilePanelOpen(false);
       }
     } catch (err) { 
-      console.error("Error cargando ruta con URLs absolutas:", err); 
+      console.error("Error cargando ruta:", err); 
     }
     setIsFetching(false);
   };
@@ -187,66 +195,65 @@ export default function RoutePlayback({ devices, token }) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Componente reutilizable para los controles de reproducción
-  const PlaybackControls = () => (
-    <div style={isMobile ? styles.playbackMobileGlass : styles.playbackContainer}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={() => setIsPlaying(!isPlaying)} style={styles.playBtn}>
-            {isPlaying ? '⏸️ Pausa' : '▶️ Play'}
-          </button>
-          
-          {!autoFollow && (
-            <button 
-              onClick={() => { 
-                setAutoFollow(true); 
-                setMapCenter([routeData[playbackIndex].latitude, routeData[playbackIndex].longitude]); 
-              }} 
-              style={{...styles.playBtn, backgroundColor: '#3B82F6', fontSize: '12px', padding: '6px 10px'}}
-              title="Reanudar seguimiento automático"
-            >
-              🎯 Centrar
-            </button>
-          )}
-        </div>
-
-        <span style={{ color: (routeData[playbackIndex].speed * 1.852) > 80 ? '#EF4444' : (isMobile ? 'white' : '#9CA3AF'), fontSize: '14px', fontWeight: 'bold' }}>
+  // Función de renderizado limpio en lugar de Sub-Componente (Soluciona el bug de la pausa)
+  const renderPlaybackControls = (isMobileView) => (
+    <div style={isMobileView ? styles.playbackMobileGlass : styles.playbackContainer}>
+      
+      {/* FILA 1: Solo Velocidad (Botón Centrar Eliminado) */}
+      <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '10px' }}>
+        <span style={{ color: (routeData[playbackIndex].speed * 1.852) > 80 ? '#EF4444' : (isMobileView ? 'white' : '#9CA3AF'), fontSize: '15px', fontWeight: 'bold' }}>
           {(routeData[playbackIndex].speed * 1.852).toFixed(1)} km/h
         </span>
       </div>
       
+      {/* FILA 2: Barra de Progreso */}
       <input 
         type="range" min="0" max={routeData.length - 1} value={playbackIndex} 
         onChange={(e) => { 
           const newIdx = Number(e.target.value);
           setPlaybackIndex(newIdx); 
           setIsPlaying(false); 
-          setAutoFollow(true); 
+          setAutoFollow(true); // Retoma el seguimiento automáticamente al mover la barra
           setMapCenter([routeData[newIdx].latitude, routeData[newIdx].longitude]);
         }} 
-        style={{ width: '100%', marginBottom: '10px', cursor: 'pointer' }} 
+        style={{ width: '100%', marginBottom: '12px', cursor: 'pointer' }} 
       />
       
-      <div style={{ display: 'flex', gap: '5px' }}>
-        {[1, 2, 5, 10, 20].map(speed => (
-          <button key={speed} onClick={() => setPlaybackSpeed(speed)} style={{...styles.speedBtn, backgroundColor: playbackSpeed === speed ? '#3B82F6' : '#1F2937'}}>
-            x{speed}
-          </button>
-        ))}
+      {/* FILA 3: Botones de Play y Multiplicadores de Velocidad */}
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button 
+          onClick={() => {
+            const nextIsPlaying = !isPlaying;
+            setIsPlaying(nextIsPlaying);
+            if (nextIsPlaying) setAutoFollow(true); // Retoma el seguimiento al dar Play
+          }} 
+          style={{...styles.playBtn, flexShrink: 0, backgroundColor: isPlaying ? '#EF4444' : '#10B981'}}
+        >
+          {isPlaying ? '⏸️ Pausa' : '▶️ Play'}
+        </button>
+        
+        <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
+          {[1, 2, 5, 10, 20].map(speed => (
+            <button key={speed} onClick={() => setPlaybackSpeed(speed)} style={{...styles.speedBtn, backgroundColor: playbackSpeed === speed ? '#3B82F6' : '#1F2937'}}>
+              x{speed}
+            </button>
+          ))}
+        </div>
       </div>
+
     </div>
   );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%', backgroundColor: '#0B1120', position: 'relative', overflow: 'hidden' }}>
       
-      {/* PANEL LATERAL DE CONTROLES (Overlay en móvil, fijo en Escritorio) */}
       <aside style={{ 
         width: isMobile ? '100%' : '320px', 
+        boxSizing: 'border-box', 
         position: isMobile ? 'absolute' : 'relative',
         top: 0, left: 0, 
         height: '100%',
-        backgroundColor: isMobile ? 'rgba(17, 24, 39, 0.97)' : '#111827', // Más opaco en móvil
+        backgroundColor: isMobile ? 'rgba(17, 24, 39, 0.97)' : '#111827',
         backdropFilter: isMobile ? 'blur(8px)' : 'none',
         padding: '20px', 
         display: (isMobile && !isMobilePanelOpen) ? 'none' : 'flex', 
@@ -259,7 +266,6 @@ export default function RoutePlayback({ devices, token }) {
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ color: 'white', margin: 0, fontSize: '18px' }}>📍 Repetición Visual</h2>
-          {/* Botón de cerrar solo en móvil */}
           {isMobile && (
             <button onClick={() => setIsMobilePanelOpen(false)} style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '24px', cursor: 'pointer' }}>✖</button>
           )}
@@ -302,14 +308,13 @@ export default function RoutePlayback({ devices, token }) {
           </button>
         </form>
 
-        {/* CONTROLES EN MODO ESCRITORIO (En móvil flotan) */}
-        {!isMobile && routeData.length > 0 && <PlaybackControls />}
+        {/* Carga del renderizado en PC */}
+        {!isMobile && routeData.length > 0 && renderPlaybackControls(false)}
 
-        {/* RESUMEN DE PARADAS */}
         {stopsData.length > 0 && (
           <div style={{ marginTop: '20px', borderTop: '1px solid #1F2937', paddingTop: '15px' }}>
             <h3 style={{ color: '#9CA3AF', fontSize: '13px', marginBottom: '10px' }}>PARADAS {'>'} 5 MIN ({stopsData.length})</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: isMobile ? '80px' : '0' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingBottom: isMobile ? '120px' : '0' }}>
               {stopsData.map((stop, i) => (
                 <div 
                   key={i} 
@@ -317,7 +322,6 @@ export default function RoutePlayback({ devices, token }) {
                   onClick={() => { 
                     setMapCenter([stop.latitude, stop.longitude]);
                     setAutoFollow(false); 
-                    // Magia UX: Cierra el menú al tocar una parada en móvil
                     if(isMobile) setIsMobilePanelOpen(false);
                   }}
                 >
@@ -335,10 +339,8 @@ export default function RoutePlayback({ devices, token }) {
         )}
       </aside>
 
-      {/* ÁREA DEL MAPA */}
-      <div style={{ flex: 1, position: 'relative', zIndex: 0, height: '100%' }}>
+      <div style={{ flex: 1, position: 'relative', zIndex: 0, height: '100%', width: '100%' }}>
         
-        {/* BOTÓN FLOTANTE MÓVIL: Para reabrir los filtros */}
         {isMobile && !isMobilePanelOpen && (
           <button 
             onClick={() => setIsMobilePanelOpen(true)}
@@ -350,6 +352,7 @@ export default function RoutePlayback({ devices, token }) {
 
         <MapContainer center={mapCenter} zoom={14} style={{ height: '100%', width: '100%' }}>
           <MapInteractions center={mapCenter} autoFollow={autoFollow} setAutoFollow={setAutoFollow} />
+          <MapResizer isMobilePanelOpen={isMobilePanelOpen} />
           
           <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
           
@@ -392,10 +395,10 @@ export default function RoutePlayback({ devices, token }) {
           ))}
         </MapContainer>
 
-        {/* REPRODUCTOR FLOTANTE EN MÓVIL */}
+        {/* Carga del renderizado flotante en Móvil */}
         {isMobile && routeData.length > 0 && (
-          <div style={{ position: 'absolute', bottom: '25px', left: '5%', width: '90%', zIndex: 1000 }}>
-            <PlaybackControls />
+          <div style={{ position: 'absolute', bottom: '90px', left: '5%', width: '90%', zIndex: 1000 }}>
+            {renderPlaybackControls(true)}
           </div>
         )}
       </div>
@@ -407,12 +410,27 @@ const styles = {
   label: { color:'#9CA3AF', fontSize:'13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', boxSizing: 'border-box', colorScheme: 'dark' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', width: '100%', marginTop: '5px', transition: 'background-color 0.2s' },
-  playbackContainer: { backgroundColor: '#0B1120', padding: '15px', borderRadius: '8px', marginTop: '20px', border: '1px solid #1F2937' },
   
-  // Nuevo estilo "Glassmorphism" para el reproductor en móvil
-  playbackMobileGlass: { backgroundColor: 'rgba(11, 17, 32, 0.85)', backdropFilter: 'blur(10px)', padding: '15px', borderRadius: '12px', border: '1px solid rgba(31, 41, 55, 0.5)', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7)' },
+  playbackContainer: { 
+    backgroundColor: '#0B1120', 
+    padding: '15px', 
+    borderRadius: '8px', 
+    marginTop: '20px', 
+    border: '1px solid #1F2937',
+    boxSizing: 'border-box' 
+  },
   
-  playBtn: { backgroundColor: '#10B981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
+  playbackMobileGlass: { 
+    backgroundColor: 'rgba(11, 17, 32, 0.85)', 
+    backdropFilter: 'blur(10px)', 
+    padding: '15px', 
+    borderRadius: '12px', 
+    border: '1px solid rgba(31, 41, 55, 0.5)', 
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7)',
+    boxSizing: 'border-box' 
+  },
+  
+  playBtn: { color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'background-color 0.2s' },
   speedBtn: { color: 'white', border: 'none', padding: '6px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', flex: 1, fontSize: '12px' },
   stopCard: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px', cursor: 'pointer', transition: 'border-color 0.2s' }
 };
