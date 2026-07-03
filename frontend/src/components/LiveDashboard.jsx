@@ -16,8 +16,8 @@ export default function LiveDashboard({ devices, positions }) {
   const [map, setMap] = useState(null); 
   const [hasInitialCentered, setHasCentered] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
-  const [filter, setFilter] = useState('all'); 
-  
+  const [filter, setFilter] = useState('all');
+
   // LOGICA RESPONSIVE: Detectar celular y controlar el panel
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [isListOpen, setIsListOpen] = useState(window.innerWidth >= 768);
@@ -110,16 +110,17 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
-  // 1. DISEÑO DEL MARCADOR
+  // 1. DISEÑO DEL MARCADOR CORREGIDO
   const createCustomMarker = (name, speed, status) => {
     const isMoving = speed > 0;
     let color = '#8B5CF6'; 
     if (status !== 'online') color = '#EF4444'; 
     else if (isMoving) color = '#10B981';
-
+    
+    // Eliminados los márgenes negativos en el primer div y se agregó flex-shrink: 0 al contenedor del SVG
     const html = `
-      <div style="display: flex; align-items: center; margin-left: -15px; margin-top: -38px;">
-        <div style="position: relative; width: 30px; height: 38px; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.4));">
+      <div style="display: flex; align-items: center;">
+        <div style="position: relative; width: 30px; height: 38px; flex-shrink: 0; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.4));">
           <svg viewBox="0 0 24 34" width="30" height="38" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 0C5.373 0 0 5.373 0 12c0 8.25 12 22 12 22s12-13.75 12-22c0-6.627-5.373-12-12-12z" fill="${color}" />
             <path d="M7 14l1.5-4h7L17 14v4h-1.5v2h-2v-2h-3v2h-2v-2H7v-4zm2.5-3h5l-.5-1.5h-4l-.5 1.5zM8 15.5c0 .28.22.5.5.5s.5-.22.5-.5-.22-.5-.5-.5-.5.22-.5.5zm7 0c0 .28.22.5.5.5s.5-.22.5-.5-.22-.5-.5-.5-.5.22-.5.5z" fill="white" />
@@ -130,7 +131,14 @@ export default function LiveDashboard({ devices, positions }) {
         </div>
       </div>
     `;
-    return L.divIcon({ className: 'traccar-custom-pin', html: html, iconSize: [120, 40], iconAnchor: [15, 38], popupAnchor: [0, -38] });
+    
+    // Eliminado el 'iconSize' para permitir flexibilidad y adaptado el 'iconAnchor'
+    return L.divIcon({ 
+      className: 'traccar-custom-pin', 
+      html: html, 
+      iconAnchor: [15, 38], 
+      popupAnchor: [0, -38] 
+    });
   };
 
   // 2. DISEÑO DEL CLUSTER
@@ -159,6 +167,11 @@ export default function LiveDashboard({ devices, positions }) {
   const handleDeviceClick = (device, pos) => {
     setSelectedDevice(device);
     if (pos && map) map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
+    
+    // Mejoras Responsive implementadas
+    if (isMobile) {
+      setIsListOpen(false);
+    }
   };
 
   return (
@@ -193,7 +206,7 @@ export default function LiveDashboard({ devices, positions }) {
         </MapContainer>
       </div>
 
-      {/* KPIs RESPONSIVE (flexWrap y maxWidth añadidos) */}
+      {/* KPIs RESPONSIVE */}
       <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', flexWrap: 'wrap', gap: '8px', pointerEvents: 'none', maxWidth: 'calc(100vw - 30px)' }}>
         <div onClick={() => setFilter('all')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'all' ? '1.5px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)'}}>
           <span style={styles.kpiLabel}>Total</span><span style={styles.kpiValue}>{totalCount}</span>

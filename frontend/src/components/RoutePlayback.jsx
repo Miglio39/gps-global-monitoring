@@ -7,11 +7,13 @@ import 'leaflet/dist/leaflet.css';
 function MapInteractions({ center, autoFollow, setAutoFollow }) {
   const map = useMapEvents({
     dragstart: () => {
+      // Si el usuario mueve el mapa manualmente, desactivamos el seguimiento automático
       if (autoFollow) setAutoFollow(false);
     }
   });
 
   useEffect(() => {
+    // Enfoca el mapa solo si el auto-seguimiento está activo
     if (autoFollow && center) {
       map.setView(center, map.getZoom(), { animate: false });
     }
@@ -20,7 +22,7 @@ function MapInteractions({ center, autoFollow, setAutoFollow }) {
   return null;
 }
 
-// Iconos personalizados
+// Icono personalizado para las Paradas (> 5 min)
 const stopIcon = new L.DivIcon({
   html: `<div style="background-color: #3B82F6; color: white; border: 2px solid white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.4);">P</div>`,
   className: 'custom-stop-icon',
@@ -28,6 +30,7 @@ const stopIcon = new L.DivIcon({
   iconAnchor: [12, 12]
 });
 
+// Icono personalizado para el Vehículo en movimiento
 const movingIcon = new L.DivIcon({
   html: `<div style="background-color: #10B981; border: 3px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);"></div>`,
   className: 'custom-moving-icon',
@@ -49,17 +52,17 @@ export default function RoutePlayback({ devices, token }) {
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
   
   const [autoFollow, setAutoFollow] = useState(true);
-
-  // NUEVO: Estado para diseño responsive
   const [isMobile, setIsMobile] = useState(false);
 
+  // Escucha el tamaño de la pantalla para el diseño responsive
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
-    handleResize(); // Revisión inicial
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Configuración inicial de fechas por defecto (Hoy)
   useEffect(() => {
     handleRangeChange('today');
     // eslint-disable-next-line
@@ -116,16 +119,17 @@ export default function RoutePlayback({ devices, token }) {
       const toISO = new Date(reportConfig.to).toISOString();
       const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
 
+      // SE ACTUALIZAN LAS URL CON EL DOMINIO DE PRODUCCIÓN SOLICITADO
       const [routeRes, stopsRes] = await Promise.all([
-        fetch(`/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
-        fetch(`/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
+        fetch(`https://api.labtesting.online/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
+        fetch(`https://api.labtesting.online/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
       ]);
 
       if(routeRes.ok && stopsRes.ok) {
         const rData = await routeRes.json();
         const sData = await stopsRes.json();
         
-        // 1. FILTRO DE PARADAS RECUPERADO (Solo paradas mayores a 5 min = 300000ms)
+        // Filtro de paradas: Solo paradas >= 5 minutos (300,000 milisegundos)
         const filteredStops = sData.filter(stop => stop.duration >= 300000);
         
         setRouteData(rData);
@@ -134,11 +138,12 @@ export default function RoutePlayback({ devices, token }) {
         if (rData.length > 0) setMapCenter([rData[0].latitude, rData[0].longitude]);
       }
     } catch (err) { 
-      console.error("Error cargando ruta:", err); 
+      console.error("Error cargando ruta con URLs absolutas:", err); 
     }
     setIsFetching(false);
   };
 
+  // Segmentación de la línea del recorrido según velocidad (> 80 km/h es Roja)
   const coloredRouteSegments = useMemo(() => {
     if (routeData.length === 0) return [];
     
@@ -186,7 +191,6 @@ export default function RoutePlayback({ devices, token }) {
   };
 
   return (
-    // CONTENEDOR PRINCIPAL: Cambia a 'column' en móvil y a 'row' en escritorio
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', width: '100%', backgroundColor: '#0B1120', overflow: isMobile ? 'auto' : 'hidden' }}>
       
       {/* PANEL LATERAL DE CONTROLES */}
