@@ -18,15 +18,18 @@ export default function LiveDashboard({ devices, positions }) {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all');
 
-  // LOGICA RESPONSIVE: Detectar celular y controlar el panel
+  // Lógica Responsive
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [isListOpen, setIsListOpen] = useState(window.innerWidth >= 768);
+
+  // ESTADO NUEVO: Dispositivos con la "Alarma de Vigilancia" activada
+  const [armedDevices, setArmedDevices] = useState({});
 
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      if (mobile) setIsListOpen(false); // Cierra la lista si la pantalla se hace pequeña
+      if (mobile) setIsListOpen(false);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -52,6 +55,38 @@ export default function LiveDashboard({ devices, positions }) {
       setHasCentered(true);
     }
   }, [positions, hasInitialCentered, map]);
+
+
+  // NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia)
+  useEffect(() => {
+    let alarmTriggered = false;
+
+    Object.keys(armedDevices).forEach(deviceIdStr => {
+      const deviceId = parseInt(deviceIdStr);
+      const isArmed = armedDevices[deviceId];
+      const pos = positions[deviceId];
+      
+      // Si está vigilado y detecta encendido (ignition: true)
+      if (isArmed && pos && pos.attributes && pos.attributes.ignition) {
+        alarmTriggered = true;
+        const deviceName = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+        
+        // 1. Mostrar Alerta en pantalla
+        alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceName}" ha sido ENCENDIDO mientras estaba en modo vigilancia.`);
+        
+        // 2. Desactivar la alarma para este vehículo (evita bucle infinito)
+        setArmedDevices(prev => ({...prev, [deviceId]: false}));
+      }
+    });
+
+    // 3. Reproducir sonido si se activó la alarma
+    if (alarmTriggered) {
+      // Usamos un sonido público gratuito, puedes cambiar la URL por un '/alarma.mp3' de tu servidor
+      const audio = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
+      audio.play().catch(e => console.error("El navegador bloqueó el audio:", e));
+    }
+  }, [positions, armedDevices, devices]);
+
 
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online').length;
@@ -95,7 +130,6 @@ export default function LiveDashboard({ devices, positions }) {
     }
   };
 
-  // Lógica de extracción de Batería
   const getBatteryInfo = (device, pos) => {
     const bLevel = pos?.attributes?.batteryLevel ?? device?.attributes?.batteryLevel;
     const bVolts = pos?.attributes?.battery ?? device?.attributes?.battery;
@@ -110,14 +144,12 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
-  // 1. DISEÑO DEL MARCADOR CORREGIDO
   const createCustomMarker = (name, speed, status) => {
     const isMoving = speed > 0;
     let color = '#8B5CF6'; 
     if (status !== 'online') color = '#EF4444'; 
     else if (isMoving) color = '#10B981';
     
-    // Eliminados los márgenes negativos en el primer div y se agregó flex-shrink: 0 al contenedor del SVG
     const html = `
       <div style="display: flex; align-items: center;">
         <div style="position: relative; width: 30px; height: 38px; flex-shrink: 0; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.4));">
@@ -132,7 +164,6 @@ export default function LiveDashboard({ devices, positions }) {
       </div>
     `;
     
-    // Eliminado el 'iconSize' para permitir flexibilidad y adaptado el 'iconAnchor'
     return L.divIcon({ 
       className: 'traccar-custom-pin', 
       html: html, 
@@ -141,7 +172,6 @@ export default function LiveDashboard({ devices, positions }) {
     });
   };
 
-  // 2. DISEÑO DEL CLUSTER
   const createClusterCustomIcon = function (cluster) {
     const count = cluster.getChildCount();
     return L.divIcon({
@@ -168,7 +198,6 @@ export default function LiveDashboard({ devices, positions }) {
     setSelectedDevice(device);
     if (pos && map) map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
     
-    // Mejoras Responsive implementadas
     if (isMobile) {
       setIsListOpen(false);
     }
@@ -206,32 +235,34 @@ export default function LiveDashboard({ devices, positions }) {
         </MapContainer>
       </div>
 
-      {/* KPIs RESPONSIVE */}
-      <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', flexWrap: 'wrap', gap: '8px', pointerEvents: 'none', maxWidth: 'calc(100vw - 30px)' }}>
-        <div onClick={() => setFilter('all')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'all' ? '1.5px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)'}}>
-          <span style={styles.kpiLabel}>Total</span><span style={styles.kpiValue}>{totalCount}</span>
+      {/* 🛠️ KPIs - AHORA SOLO SE MUESTRAN SI NO ES MÓVIL (!isMobile) */}
+      {!isMobile && (
+        <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', flexWrap: 'wrap', gap: '8px', pointerEvents: 'none', maxWidth: 'calc(100vw - 30px)' }}>
+          <div onClick={() => setFilter('all')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'all' ? '1.5px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>Total</span><span style={styles.kpiValue}>{totalCount}</span>
+          </div>
+          <div onClick={() => setFilter('moving')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'moving' ? '1.5px solid #10B981' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>En Ruta</span><span style={{...styles.kpiValue, color: '#10B981'}}>{movingCount}</span>
+          </div>
+          <div onClick={() => setFilter('stopped')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'stopped' ? '1.5px solid #8B5CF6' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>Detenidos</span><span style={{...styles.kpiValue, color: '#8B5CF6'}}>{stoppedCount}</span>
+          </div>
+          <div onClick={() => setFilter('online')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'online' ? '1.5px solid #10B981' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>Online</span><span style={{...styles.kpiValue, color: '#10B981'}}>{onlineCount}</span>
+          </div>
+          <div onClick={() => setFilter('offline')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'offline' ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>Offline</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
+          </div>
         </div>
-        <div onClick={() => setFilter('moving')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'moving' ? '1.5px solid #10B981' : '1px solid rgba(255,255,255,0.1)'}}>
-          <span style={styles.kpiLabel}>En Ruta</span><span style={{...styles.kpiValue, color: '#10B981'}}>{movingCount}</span>
-        </div>
-        <div onClick={() => setFilter('stopped')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'stopped' ? '1.5px solid #8B5CF6' : '1px solid rgba(255,255,255,0.1)'}}>
-          <span style={styles.kpiLabel}>Detenidos</span><span style={{...styles.kpiValue, color: '#8B5CF6'}}>{stoppedCount}</span>
-        </div>
-        <div onClick={() => setFilter('online')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'online' ? '1.5px solid #10B981' : '1px solid rgba(255,255,255,0.1)'}}>
-          <span style={styles.kpiLabel}>Online</span><span style={{...styles.kpiValue, color: '#10B981'}}>{onlineCount}</span>
-        </div>
-        <div onClick={() => setFilter('offline')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'offline' ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.1)'}}>
-          <span style={styles.kpiLabel}>Offline</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
-        </div>
-      </div>
+      )}
 
-      {/* PANEL FLOTANTE DE UNIDADES - RESPONSIVE (CUADRITO O LISTA) */}
+      {/* PANEL FLOTANTE DE UNIDADES */}
       <div style={{ 
         position: 'absolute', 
         top: 15, 
         right: 15, 
         bottom: isListOpen ? 15 : 'auto', 
-        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '290px') : '44px', 
+        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '320px') : '44px', // Ensanchado un poco a 320px para acomodar el nuevo botón
         height: isListOpen ? 'auto' : '44px',
         maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
         backgroundColor: 'rgba(15, 23, 42, 0.85)', 
@@ -285,6 +316,9 @@ export default function LiveDashboard({ devices, positions }) {
               const isMoving = pos && pos.speed > 0;
               const isSelected = selectedDevice?.id === device.id;
               
+              // Estado actual de la alarma para este vehículo
+              const isArmed = armedDevices[device.id] || false;
+
               let statusDotColor = '#8B5CF6'; 
               if (device.status !== 'online') statusDotColor = '#EF4444'; 
               else if (isMoving) statusDotColor = '#10B981'; 
@@ -297,22 +331,18 @@ export default function LiveDashboard({ devices, positions }) {
                 <div 
                   key={device.id} 
                   onClick={() => handleDeviceClick(device, pos)}
-                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(255,255,255,0.04)', transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '10px' }}
+                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '10px' }}
                 >
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusDotColor, boxShadow: `0 0 8px ${statusDotColor}`, flexShrink: 0 }}></div>
                   
                   <div style={{ overflow: 'hidden', flex: 1 }}>
                     
-                    {/* PRIMERA FILA: Nombre y Telemetría Destacada (Batería y Motor) */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ color: isSelected ? '#60A5FA' : '#F9FAFB', fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600' }}>
+                      <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600' }}>
                         {device.name}
                       </strong>
                       
-                      {/* BADGES (INSIGNIAS) TELEMÉTRICAS MODERNAS */}
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-                        
-                        {/* Badge de Ignición */}
                         {hasIgnition && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: ignition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${ignition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }} title={ignition ? 'Motor Encendido' : 'Motor Apagado'}>
                             <span style={{ fontSize: '10px' }}>🔑</span>
@@ -322,7 +352,6 @@ export default function LiveDashboard({ devices, positions }) {
                           </div>
                         )}
 
-                        {/* Badge de Batería */}
                         {batteryInfo.text && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} title="Nivel de Batería">
                             <span style={{ fontSize: '10px' }}>🔋</span>
@@ -331,20 +360,33 @@ export default function LiveDashboard({ devices, positions }) {
                             </span>
                           </div>
                         )}
-                        
                       </div>
                     </div>
                     
-                    {/* SEGUNDA FILA: Velocidad y Botones de Control */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
                       <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: '500' }}>
                         {device.status !== 'online' ? 'Desconectado' : pos ? `${(pos.speed * 1.852).toFixed(0)} km/h` : '0 km/h'}
                       </span>
                       
-                      {/* MICRO-BOTONES GPRS */}
+                      {/* MICRO-BOTONES */}
                       <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
+                        
+                        {/* 🛠️ NUEVO BOTÓN: VIGILAR (ALARMA) */}
                         <button 
-                          title="Apagar Motor (Corte Remoto)"
+                          title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setArmedDevices(prev => ({...prev, [device.id]: !isArmed}));
+                          }}
+                          style={{ backgroundColor: isArmed ? 'rgba(234, 179, 8, 0.15)' : 'transparent', border: isArmed ? '1px solid #EAB308' : '1px solid rgba(156, 163, 175, 0.3)', color: isArmed ? '#EAB308' : '#9CA3AF', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseEnter={(e) => { if(!isArmed) e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'; }}
+                          onMouseLeave={(e) => { if(!isArmed) e.target.style.backgroundColor = 'transparent'; }}
+                        >
+                          {isArmed ? '🔔 Vigilando' : '🔕 Vigilar'}
+                        </button>
+
+                        <button 
+                          title="Apagar Motor"
                           onClick={() => handleEngineControl(device.id, device.name, true)}
                           style={{ backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
                           onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'; }}
