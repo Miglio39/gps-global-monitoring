@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
-// Llave de LocationIQ y Memoria Caché para máxima velocidad
+// Llaves y Caché
 const LOCATION_IQ_KEY = 'pk.e0a46bceeed78c708e78aacfc0b2942c';
 const geoCache = {}; 
 
+// EL DOMINIO DE TU SERVIDOR (LA SOLUCIÓN A LA CONEXIÓN)
+const BASE_URL = 'https://api.labtesting.online'; 
+
 export default function Reports({ devices, token }) {
-  // LÓGICA RESPONSIVE: Bloquear módulo en celulares
+  // Bloquear módulo en celulares
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   useEffect(() => {
@@ -17,7 +20,6 @@ export default function Reports({ devices, token }) {
   const [reportConfig, setReportConfig] = useState({ deviceId: '', from: '', to: '' });
   const [quickRange, setQuickRange] = useState('custom');
   const [reportType, setReportType] = useState('daily');
-  
   const [speedLimit, setSpeedLimit] = useState(80); 
   
   const [summaryData, setSummaryData] = useState([]);
@@ -27,7 +29,7 @@ export default function Reports({ devices, token }) {
   
   const [isFetching, setIsFetching] = useState(false);
 
-  // Traductor de Coordenadas optimizado con Caché
+  // Traductor de Coordenadas
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return 'Coordenadas inválidas';
     
@@ -45,7 +47,7 @@ export default function Reports({ devices, token }) {
         const road = addr.road || addr.neighbourhood || addr.suburb || 'Vía';
         const finalAddress = `${road}, ${city}`;
         
-        geoCache[cacheKey] = finalAddress; // Guardamos en memoria para acelerar futuras búsquedas
+        geoCache[cacheKey] = finalAddress; 
         return finalAddress;
       }
     } catch (error) {
@@ -107,15 +109,14 @@ export default function Reports({ devices, token }) {
 
     try {
       if (reportType === 'daily') {
-        // OPTIMIZACIÓN 1: Fetching Concurrente (Carga el doble de rápido)
+        // Peticiones usando BASE_URL
         const [resSummary, resRoute] = await Promise.all([
-            fetch(`/api/reports/summary?${baseParams}&daily=true`, { headers }),
-            fetch(`/api/reports/route?${baseParams}`, { headers }).catch(() => null)
+            fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers }),
+            fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers }).catch(() => null)
         ]);
 
         if (resSummary.ok) {
             let summary = await resSummary.json();
-            
             try {
                 if (resRoute && resRoute.ok) {
                     const route = await resRoute.json();
@@ -139,16 +140,15 @@ export default function Reports({ devices, token }) {
             } catch (err) {
                 console.warn("Cruce de datos de ruta fallido", err);
             }
-
             setSummaryData(summary);
         }
       } 
       else if (reportType === 'route') {
-        const res = await fetch(`/api/reports/route?${baseParams}`, { headers });
+        const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) setRouteData(await res.json());
       }
       else if (reportType === 'speed') {
-        const res = await fetch(`/api/reports/route?${baseParams}`, { headers });
+        const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) {
             const route = await res.json();
             const overspeed = route.filter(pos => (pos.speed * 1.852) > speedLimit);
@@ -163,7 +163,7 @@ export default function Reports({ devices, token }) {
         }
       }
       else if (reportType === 'harsh') {
-        const res = await fetch(`/api/reports/route?${baseParams}`, { headers });
+        const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) {
             const rawRoute = await res.json();
             const calculatedEvents = [];
@@ -173,8 +173,8 @@ export default function Reports({ devices, token }) {
               minDeltaVKmh: 15,         
               maxTimeSec: 5,            
               minTimeSec: 1,            
-              accelThresholds: { mod: 1.5, harsh: 2.5, extreme: 3.5 }, // m/s²
-              brakeThresholds: { mod: 2.0, harsh: 3.0, extreme: 4.5 }, // m/s²
+              accelThresholds: { mod: 1.5, harsh: 2.5, extreme: 3.5 },
+              brakeThresholds: { mod: 2.0, harsh: 3.0, extreme: 4.5 },
               physicalLimitG: 9.8       
             };
 
@@ -260,17 +260,15 @@ export default function Reports({ devices, token }) {
         }
       }
       else if (reportType === 'stops' || reportType === 'idle') {
-        const res = await fetch(`/api/reports/stops?${baseParams}`, { headers });
+        const res = await fetch(`${BASE_URL}/api/reports/stops?${baseParams}`, { headers });
         if (res.ok) {
             let stops = await res.json();
             if (reportType === 'idle') {
                 stops = stops.filter(stop => stop.engineHours && stop.engineHours > 0);
             }
             
-            // OPTIMIZACIÓN 2: Renderizado Instantáneo y Geocodificación Asíncrona (Sin bloqueos)
             setStopsData(stops);
 
-            // Proceso en segundo plano para actualizar direcciones una por una sin congelar la pantalla
             stops.forEach(async (stop, index) => {
                 const currentAddr = stop.address;
                 if (!currentAddr || /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(currentAddr)) {
@@ -288,7 +286,7 @@ export default function Reports({ devices, token }) {
       }
     } catch (err) { 
         console.error(err);
-        alert("Hubo un problema de conexión al extraer la información.");
+        alert("Hubo un problema de conexión al extraer la información. Por favor revisa tu conexión a internet.");
     }
     setIsFetching(false);
   };
@@ -297,9 +295,6 @@ export default function Reports({ devices, token }) {
     alert("Para exportar los reportes detallados, sugerimos sombrear y copiar la tabla generada en la pantalla directamente a Excel.");
   };
 
-  // --------------------------------------------------------
-  // PANTALLA DE BLOQUEO PARA MÓVILES
-  // --------------------------------------------------------
   if (isMobile) {
     return (
       <main style={{flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '30px', backgroundColor: '#0B1120', textAlign: 'center'}}>
@@ -316,9 +311,6 @@ export default function Reports({ devices, token }) {
     );
   }
 
-  // --------------------------------------------------------
-  // RENDERIZADO NORMAL (ESCRITORIO)
-  // --------------------------------------------------------
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Módulo de Informes Analíticos</h2>
@@ -415,7 +407,6 @@ export default function Reports({ devices, token }) {
                         <td style={styles.td}>
                           {new Date(day.startTime).toLocaleTimeString()}
                         </td>
-                        
                         <td style={styles.td}>
                           {new Date(day.endTime).toLocaleTimeString()}
                         </td>
@@ -473,7 +464,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3 & 4. TABLAS: EVENTOS (SIN EMOJIS EN LA TABLA) */}
+        {/* 3 & 4. TABLAS: EVENTOS (SIN EMOJIS) */}
         {(reportType === 'speed' || reportType === 'harsh') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones / Alertas ({eventsData.length} eventos)</h3>
