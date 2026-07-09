@@ -99,6 +99,9 @@ export default function Dashboard() {
   return (
     <>
       <style>{`
+        /* REGLA MAESTRA: Evita que los márgenes sumen tamaño extra a la pantalla */
+        * { box-sizing: border-box; }
+
         /* ESTILOS BASE (ESCRITORIO) */
         .layout-main {
           display: flex;
@@ -142,7 +145,6 @@ export default function Dashboard() {
           position: relative; 
         }
 
-        /* Estilos del Menú Desplegable de Usuario (Escritorio) */
         .user-menu-dropdown {
           position: absolute;
           left: 45px;
@@ -185,11 +187,9 @@ export default function Dashboard() {
           font-weight: 500;
         }
 
-        .logout-btn:hover {
-          background-color: rgba(239, 68, 68, 0.1);
-        }
+        .logout-btn:hover { background-color: rgba(239, 68, 68, 0.1); }
 
-        /* DISEÑO RESPONSIVE (MÓVIL) */
+        /* DISEÑO RESPONSIVE (MÓVIL) - CORREGIDO */
         @media (max-width: 768px) {
           .layout-main {
             flex-direction: column; 
@@ -199,13 +199,13 @@ export default function Dashboard() {
             position: fixed;
             bottom: 0;
             left: 0;
-            width: 100%;
+            width: 100%; /* Ahora sí respetará el 100% exacto gracias a border-box */
             height: 60px;
             flex-direction: row;
             border-right: none;
             border-top: 1px solid #1F2937;
-            padding: 0 10px;
-            justify-content: space-around;
+            padding: 0 15px; /* Espacio extra a los lados */
+            justify-content: space-between;
           }
 
           .main-content {
@@ -216,28 +216,29 @@ export default function Dashboard() {
           .logo-container { display: none; }
           
           .nav-menu {
+            flex: 1;
             flex-direction: row;
-            justify-content: space-around;
+            justify-content: space-around; /* Distribuye equitativamente los iconos */
             align-items: center;
-            gap: 5px;
             height: 100%;
+            margin-right: 10px; /* Crea un pequeño hueco antes de la división del perfil */
           }
 
           .user-panel {
+            flex-shrink: 0; /* IMPIDE QUE LA PANTALLA EXPRIMA O SAQUE AL BOTÓN DE PERFIL */
             flex-direction: row;
+            justify-content: center;
             width: auto;
             padding-top: 0;
             border-top: none;
-            border-left: 1px solid #1F2937;
-            padding-left: 10px;
-            margin-left: 5px;
+            border-left: 1px solid #1F2937; /* Línea divisoria */
+            padding-left: 15px; /* Separación de la línea */
             height: 100%;
           }
 
-          /* Adaptación del menú desplegable para celulares */
           .user-menu-dropdown {
             left: auto;
-            right: 10px;
+            right: 15px;
             bottom: 70px;
           }
         }
@@ -295,8 +296,8 @@ export default function Dashboard() {
               style={{ 
                 backgroundColor: '#2563EB', 
                 color: 'white', 
-                width: '26px', 
-                height: '26px', 
+                width: '28px', 
+                height: '28px', 
                 borderRadius: '50%', 
                 display: 'flex', 
                 justifyContent: 'center', 
