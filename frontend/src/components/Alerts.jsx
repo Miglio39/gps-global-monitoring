@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { API_BASE } from '../config'; 
-// (Asegúrate de que la ruta '../config' apunte a donde guardaste el archivo config.js)
 
 // Componente para forzar centrado de cámara
 function ChangeView({ center }) {
@@ -25,6 +23,9 @@ export default function Alerts({ devices, token }) {
   const [alertData, setAlertData] = useState([]);
   const [isFetching, setIsFetching] = useState(false);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
+
+  // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
+  const BASE_URL = 'https://api.labtesting.online';
 
   // Marcador Dinámico (Cambia de color según el tipo de alerta)
   const createAlertMarker = (title, color) => {
@@ -79,8 +80,8 @@ export default function Alerts({ devices, token }) {
       const fromIso = new Date(reportConfig.from).toISOString();
       const toIso = new Date(reportConfig.to).toISOString();
       
-      // Siempre pedimos la ruta para tener las coordenadas exactas de ese día
-      const urlRoute = `/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
+      // CONEXIÓN ONLINE: Apuntando directamente a la nube para extraer coordenadas
+      const urlRoute = `${BASE_URL}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
       const resRoute = await fetch(urlRoute, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
       const routeData = resRoute.ok ? await resRoute.json() : [];
 
@@ -103,7 +104,8 @@ export default function Alerts({ devices, token }) {
       } 
       // LÓGICA 2: Eventos Nativos de Traccar (Encendidos, Apagados, Alarmas, Geocercas)
       else {
-        const urlEvents = `/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
+        // CONEXIÓN ONLINE: Apuntando a la nube para extraer los eventos
+        const urlEvents = `${BASE_URL}/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resEvents = await fetch(urlEvents, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
         const eventsData = resEvents.ok ? await resEvents.json() : [];
 
@@ -128,7 +130,7 @@ export default function Alerts({ devices, token }) {
           if (ev.type === 'alarm') { title = 'Alarma'; desc = ev.attributes?.alarm || 'Alarma general detectada'; color = '#EF4444'; } // Rojo
           if (ev.type === 'deviceStopped') { title = 'Parada'; desc = 'El vehículo se detuvo'; color = '#3B82F6'; } // Azul
           
-          // NUEVAS ALERTAS DE GEOCERCAS
+          // ALERTAS DE GEOCERCAS INTEGRADAS
           if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } // Verde esmeralda
           if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } // Naranja oscuro
 
@@ -158,7 +160,7 @@ export default function Alerts({ devices, token }) {
 
     } catch (err) { 
       console.error(err); 
-      alert("Error al obtener alertas.");
+      alert("Error al conectarse con el servidor de Traccar.");
     }
     
     setIsFetching(false);
@@ -189,8 +191,6 @@ export default function Alerts({ devices, token }) {
               <option value="deviceStopped">🔵 Paradas</option>
               <option value="deviceOffline">⚪ Desconexión de Señal</option>
               <option value="alarm">🚨 Alarmas (SOS/Corte)</option>
-              
-              {/* NUEVAS OPCIONES DE GEOCERCAS */}
               <option value="geofenceEnter">🌐 Entrada a Geocerca</option>
               <option value="geofenceExit">⭕ Salida de Geocerca</option>
             </select>
@@ -235,7 +235,6 @@ export default function Alerts({ devices, token }) {
         <div style={{...styles.mapContainer, flex: 2}}>
           <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
-            {/* AQUÍ TAMBIÉN APLICAMOS EL MAPA DETALLADO (TileLayer) QUE USAMOS EN GEOCERCAS */}
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
             {alertData.map((alert, index) => {
               // Si no tiene coordenadas válidas, no pintamos el marcador
