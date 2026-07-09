@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -24,6 +24,15 @@ export default function Alerts({ devices, token }) {
   const [isFetching, setIsFetching] = useState(false);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
 
+  // Lógica Responsive importada al estilo de tu LiveDashboard
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
   const BASE_URL = 'https://api.labtesting.online';
 
@@ -34,7 +43,6 @@ export default function Alerts({ devices, token }) {
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
-       
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
@@ -52,23 +60,38 @@ export default function Alerts({ devices, token }) {
   const handleRangeChange = (rangeValue) => {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
-    const now = new Date(); const start = new Date(now); const end = new Date(now);
-    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
+
+    const now = new Date(); 
+    const start = new Date(now); 
+    const end = new Date(now);
+
+    if (rangeValue === 'today') { 
+      start.setHours(0, 0, 0, 0); 
+      end.setHours(23, 59, 59, 999);
     }
-    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1);
-    end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'yesterday') { 
+      start.setDate(start.getDate() - 1); 
+      start.setHours(0, 0, 0, 0); 
+      end.setDate(end.getDate() - 1);
+      end.setHours(23, 59, 59, 999); 
+    }
+    else if (rangeValue === 'thisMonth') { 
+      start.setDate(1); 
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999); 
+    }
+    
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     setReportConfig({ ...reportConfig, from: format(start), to: format(end) });
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     handleRangeChange('today');
   }, []);
 
   const handleFetchAlerts = async (e) => {
     e.preventDefault();
+
     if (!reportConfig.deviceId || !reportConfig.from || !reportConfig.to) {
       alert('Por favor completa todos los filtros.'); return;
     }
@@ -79,7 +102,7 @@ export default function Alerts({ devices, token }) {
     try {
       const fromIso = new Date(reportConfig.from).toISOString();
       const toIso = new Date(reportConfig.to).toISOString();
-      
+
       // CONEXIÓN ONLINE: Apuntando directamente a la nube para extraer coordenadas
       const urlRoute = `${BASE_URL}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
       const resRoute = await fetch(urlRoute, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
@@ -115,7 +138,7 @@ export default function Alerts({ devices, token }) {
 
         // Filtramos solo el evento que el usuario seleccionó
         const filteredEvents = eventsData.filter(ev => ev.type === reportConfig.alertType);
-        
+
         foundAlerts = filteredEvents.map(ev => {
           const pos = posMap[ev.positionId] || {}; // Buscamos la lat/lon usando el positionId del evento
           
@@ -147,7 +170,7 @@ export default function Alerts({ devices, token }) {
       }
       
       setAlertData(foundAlerts);
-      
+
       // Centrar el mapa en la primera alerta que tenga coordenadas válidas
       const firstValidAlert = foundAlerts.find(a => a.lat && a.lon);
       if (firstValidAlert) {
@@ -159,7 +182,7 @@ export default function Alerts({ devices, token }) {
       }
 
     } catch (err) { 
-      console.error(err); 
+      console.error(err);
       alert("Error al conectarse con el servidor de Traccar.");
     }
     
@@ -167,12 +190,25 @@ export default function Alerts({ devices, token }) {
   };
 
   return (
-    <main style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
-      <h2 style={{color:'white', margin:'0 0 20px 0'}}>Centro de Alertas y Eventos</h2>
+    <main style={{
+      flex: 1, 
+      padding: isMobile ? '15px' : '20px 30px', // Ajuste padding móvil
+      display: 'flex', 
+      flexDirection: 'column', 
+      overflowY: 'auto',
+      paddingBottom: isMobile ? '80px' : '20px' // Margen inferior para barra de navegación móvil
+    }}>
+      <h2 style={{color:'white', margin:'0 0 20px 0', fontSize: isMobile ? '20px' : '24px'}}>Centro de Alertas y Eventos</h2>
       
       {/* PANEL DE FILTROS */}
       <div style={styles.adminCard}>
-        <form onSubmit={handleFetchAlerts} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
+        <form onSubmit={handleFetchAlerts} style={{
+          display: 'flex', 
+          gap: '15px', 
+          flexDirection: isMobile ? 'column' : 'row', // En móvil se apilan hacia abajo
+          flexWrap: 'wrap', 
+          alignItems: isMobile ? 'stretch' : 'flex-end'
+        }}>
           
           <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
@@ -198,7 +234,7 @@ export default function Alerts({ devices, token }) {
 
           {/* SOLO MOSTRAR LÍMITE DE VELOCIDAD SI SELECCIONA EXCESO DE VELOCIDAD */}
           {reportConfig.alertType === 'overspeed' && (
-            <div style={{width: '100px'}}>
+            <div style={{width: isMobile ? '100%' : '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
             </div>
@@ -221,18 +257,30 @@ export default function Alerts({ devices, token }) {
             </>
           )}
 
-          <button type="submit" disabled={isFetching} style={styles.btn}>
+          <button type="submit" disabled={isFetching} style={{...styles.btn, width: isMobile ? '100%' : 'auto'}}>
             {isFetching ? 'Analizando...' : '🚨 Extraer Alertas'}
           </button>
 
         </form>
       </div>
 
-      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
-      <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
+      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA (Se apilan en móvil) */}
+      <div style={{ 
+        display: 'flex', 
+        flexDirection: isMobile ? 'column' : 'row', 
+        gap: '20px', 
+        marginTop: '20px', 
+        flex: 1, 
+        minHeight: isMobile ? 'auto' : '50vh' 
+      }}>
         
         {/* MAPA DE ALERTAS */}
-        <div style={{...styles.mapContainer, flex: 2}}>
+        <div style={{
+          ...styles.mapContainer, 
+          flex: isMobile ? 'none' : 2, 
+          height: isMobile ? '350px' : 'auto', // Altura fija en móvil para que no desaparezca
+          minHeight: isMobile ? '350px' : 'auto'
+        }}>
           <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
@@ -259,7 +307,14 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        <div style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
+        <div style={{
+          ...styles.tableContainer, 
+          flex: isMobile ? 'none' : 1, 
+          height: isMobile ? '400px' : 'auto', // Límite de altura en móvil para poder hacer scroll
+          marginTop: 0, 
+          display: 'flex', 
+          flexDirection: 'column'
+        }}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
           <div style={{ overflowY: 'auto', flex: 1 }}>
