@@ -18,7 +18,7 @@ export default function Alerts({ devices, token }) {
     from: '', 
     to: '', 
     speedLimit: 80,
-    alertType: 'overspeed' // Nuevo: Tipo de alerta por defecto
+    alertType: 'overspeed' // Tipo de alerta por defecto
   });
   const [quickRange, setQuickRange] = useState('today');
   
@@ -33,12 +33,12 @@ export default function Alerts({ devices, token }) {
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
+       
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
       </div>
     `;
-
     return L.divIcon({
       className: 'traccar-alert-icon',
       html: html,
@@ -52,9 +52,12 @@ export default function Alerts({ devices, token }) {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
     const now = new Date(); const start = new Date(now); const end = new Date(now);
-    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1); end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
+    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
+    }
+    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1);
+    end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999); }
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     setReportConfig({ ...reportConfig, from: format(start), to: format(end) });
   };
@@ -98,7 +101,7 @@ export default function Alerts({ devices, token }) {
             color: '#EF4444' // Rojo
           }));
       } 
-      // LÓGICA 2: Eventos Nativos de Traccar (Encendidos, Apagados, Alarmas)
+      // LÓGICA 2: Eventos Nativos de Traccar (Encendidos, Apagados, Alarmas, Geocercas)
       else {
         const urlEvents = `/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resEvents = await fetch(urlEvents, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
@@ -110,7 +113,7 @@ export default function Alerts({ devices, token }) {
 
         // Filtramos solo el evento que el usuario seleccionó
         const filteredEvents = eventsData.filter(ev => ev.type === reportConfig.alertType);
-
+        
         foundAlerts = filteredEvents.map(ev => {
           const pos = posMap[ev.positionId] || {}; // Buscamos la lat/lon usando el positionId del evento
           
@@ -124,6 +127,10 @@ export default function Alerts({ devices, token }) {
           if (ev.type === 'deviceOffline') { title = 'Desconexión'; desc = 'Pérdida de señal de datos'; color = '#6B7280'; } // Gris
           if (ev.type === 'alarm') { title = 'Alarma'; desc = ev.attributes?.alarm || 'Alarma general detectada'; color = '#EF4444'; } // Rojo
           if (ev.type === 'deviceStopped') { title = 'Parada'; desc = 'El vehículo se detuvo'; color = '#3B82F6'; } // Azul
+          
+          // NUEVAS ALERTAS DE GEOCERCAS
+          if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } // Verde esmeralda
+          if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } // Naranja oscuro
 
           return {
             id: ev.id,
@@ -182,6 +189,10 @@ export default function Alerts({ devices, token }) {
               <option value="deviceStopped">🔵 Paradas</option>
               <option value="deviceOffline">⚪ Desconexión de Señal</option>
               <option value="alarm">🚨 Alarmas (SOS/Corte)</option>
+              
+              {/* NUEVAS OPCIONES DE GEOCERCAS */}
+              <option value="geofenceEnter">🌐 Entrada a Geocerca</option>
+              <option value="geofenceExit">⭕ Salida de Geocerca</option>
             </select>
           </div>
 
@@ -224,8 +235,8 @@ export default function Alerts({ devices, token }) {
         <div style={{...styles.mapContainer, flex: 2}}>
           <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
-            
+            {/* AQUÍ TAMBIÉN APLICAMOS EL MAPA DETALLADO (TileLayer) QUE USAMOS EN GEOCERCAS */}
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
             {alertData.map((alert, index) => {
               // Si no tiene coordenadas válidas, no pintamos el marcador
               if (!alert.lat || !alert.lon) return null;

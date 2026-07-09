@@ -354,8 +354,7 @@ export default function RoutePlayback({ devices, token }) {
           <MapInteractions center={mapCenter} autoFollow={autoFollow} setAutoFollow={setAutoFollow} />
           <MapResizer isMobilePanelOpen={isMobilePanelOpen} />
           
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
-          
+<TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          
           {coloredRouteSegments.map((segment, idx) => (
             <Polyline 
               key={idx} 
