@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'; // 1. Importamos useEffect
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
@@ -9,12 +9,39 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
 
-  // 2. EFECTO DE AUTOLOGIN: Comprueba si ya hay una sesión activa al cargar la pantalla
+  // --- 1. LÓGICA PARA INSTALAR COMO APP MÓVIL (PWA) ---
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    // Escuchar el evento de instalación de PWA
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e); 
+    });
+
+    // Escuchar cuando la pantalla cambie de tamaño
+    const handleResize = () => setIsMobileView(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    }
+  };
+  // ----------------------------------------------------
+
+  // EFECTO DE AUTOLOGIN
   useEffect(() => {
     const token = localStorage.getItem('traccar_token');
     if (token) {
-      // Si el token existe, el usuario ya inició sesión previamente. 
-      // Lo enviamos directo al dashboard sin pedir credenciales.
       navigate('/dashboard');
     }
   }, [navigate]);
@@ -37,6 +64,7 @@ export default function Login() {
         const userData = await response.json();
         
         const basicAuth = btoa(`${identifier}:${password}`);
+
         localStorage.setItem('traccar_token', basicAuth);
         localStorage.setItem('traccar_user', JSON.stringify(userData));
         
@@ -73,6 +101,14 @@ export default function Login() {
           }
         `}
       </style>
+
+      {/* 2. BANNER DE INSTALACIÓN (Flota arriba en el Login) */}
+      {deferredPrompt && isMobileView && (
+        <div style={{ position: 'absolute', top: '15px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', maxWidth: '400px', justifyContent: 'space-between', animation: 'fadeIn 0.5s ease' }}>
+          <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
+          <button onClick={handleInstallApp} style={{ backgroundColor: 'white', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Descargar</button>
+        </div>
+      )}
 
       <div style={styles.loginCard} className="animated-card">
         
@@ -146,7 +182,7 @@ export default function Login() {
 }
 
 const styles = {
-  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px' },
+  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px', position: 'relative' },
   loginCard: { backgroundColor: '#FFFFFF', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '100%', maxWidth: '420px', textAlign: 'center' },
   header: { marginBottom: '30px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   companyName: { margin: 0, fontSize: '24px', letterSpacing: '3px', color: '#0B1120', fontWeight: '800' },
