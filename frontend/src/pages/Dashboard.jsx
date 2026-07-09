@@ -172,6 +172,25 @@ export default function Dashboard() {
           text-overflow: ellipsis;
         }
 
+        /* Botón de Instalación dentro del menú */
+        .install-btn {
+          background: transparent;
+          border: none;
+          border-bottom: 1px solid #374151;
+          color: #3B82F6; /* Color azul para destacar */
+          cursor: pointer;
+          font-size: 13px;
+          padding: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          transition: background-color 0.2s ease;
+          width: 100%;
+          font-weight: bold;
+        }
+        .install-btn:hover { background-color: rgba(59, 130, 246, 0.1); }
+
         .logout-btn {
           background: transparent;
           border: none;
@@ -186,10 +205,9 @@ export default function Dashboard() {
           width: 100%;
           font-weight: 500;
         }
-
         .logout-btn:hover { background-color: rgba(239, 68, 68, 0.1); }
 
-        /* DISEÑO RESPONSIVE (MÓVIL) - CORREGIDO */
+        /* DISEÑO RESPONSIVE (MÓVIL) */
         @media (max-width: 768px) {
           .layout-main {
             flex-direction: column; 
@@ -199,12 +217,12 @@ export default function Dashboard() {
             position: fixed;
             bottom: 0;
             left: 0;
-            width: 100%; /* Ahora sí respetará el 100% exacto gracias a border-box */
+            width: 100%; 
             height: 60px;
             flex-direction: row;
             border-right: none;
             border-top: 1px solid #1F2937;
-            padding: 0 15px; /* Espacio extra a los lados */
+            padding: 0 15px; 
             justify-content: space-between;
           }
 
@@ -218,21 +236,21 @@ export default function Dashboard() {
           .nav-menu {
             flex: 1;
             flex-direction: row;
-            justify-content: space-around; /* Distribuye equitativamente los iconos */
+            justify-content: space-around; 
             align-items: center;
             height: 100%;
-            margin-right: 10px; /* Crea un pequeño hueco antes de la división del perfil */
+            margin-right: 10px; 
           }
 
           .user-panel {
-            flex-shrink: 0; /* IMPIDE QUE LA PANTALLA EXPRIMA O SAQUE AL BOTÓN DE PERFIL */
+            flex-shrink: 0; 
             flex-direction: row;
             justify-content: center;
             width: auto;
             padding-top: 0;
             border-top: none;
-            border-left: 1px solid #1F2937; /* Línea divisoria */
-            padding-left: 15px; /* Separación de la línea */
+            border-left: 1px solid #1F2937; 
+            padding-left: 15px; 
             height: 100%;
           }
 
@@ -261,7 +279,7 @@ export default function Dashboard() {
               <MenuIcon path="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /> 
             </div>
 
-            {/* AQUI ESTÁ EL FILTRO: Solo se muestran si NO estamos en celular (!isMobileView) */}
+            {/* Filtro: Solo se muestran si NO estamos en celular */}
             {!isMobileView && (
               <>
                 <div onClick={() => setActiveTab('report')} title="Informes y Analíticas" style={{...styles.navItem, ...(activeTab === 'report' ? styles.navItemActive : {})}}>
@@ -289,7 +307,7 @@ export default function Dashboard() {
           </nav>
 
           <div className="user-panel">
-            {/* Círculo interactivo que despliega el menú al hacer clic */}
+            {/* Círculo interactivo */}
             <div 
               onClick={() => setShowUserMenu(!showUserMenu)}
               title="Opciones de perfil" 
@@ -313,12 +331,20 @@ export default function Dashboard() {
               {currentUser ? currentUser.name.charAt(0).toUpperCase() : 'U'}
             </div>
             
-            {/* Menú flotante que aparece solo cuando showUserMenu es verdadero */}
+            {/* Menú flotante (Se abre al tocar el círculo del usuario) */}
             {showUserMenu && (
               <div className="user-menu-dropdown">
                 <div className="user-menu-header">
                   {currentUser ? currentUser.name : 'Usuario'}
                 </div>
+
+                {/* BOTÓN BACKUP DE INSTALACIÓN DENTRO DEL MENÚ */}
+                {deferredPrompt && isMobileView && (
+                  <button onClick={handleInstallApp} className="install-btn">
+                    📱 Instalar App
+                  </button>
+                )}
+
                 <button onClick={handleLogout} className="logout-btn">
                   <MenuIcon path="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                   <span>Cerrar Sesión</span>
@@ -331,20 +357,19 @@ export default function Dashboard() {
         {/* CONTENIDO PRINCIPAL */}
         <div className="main-content">
           
-          {/* BANNER DE INSTALACIÓN (solo si hay deferredPrompt Y es celular) */}
+          {/* BANNER DE INSTALACIÓN PRINCIPAL (Flota arriba) */}
           {deferredPrompt && isMobileView && (
-            <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', justifyContent: 'space-between' }}>
+            <div style={{ position: 'absolute', top: '15px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
               <button onClick={handleInstallApp} style={{ backgroundColor: 'white', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Descargar</button>
             </div>
           )}
 
-          {/* Ocultar el menú al hacer clic en cualquier parte del contenido principal para mayor comodidad */}
+          {/* Ocultar el menú al hacer clic en el área principal */}
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }} onClick={() => showUserMenu && setShowUserMenu(false)}>
             {activeTab === 'dashboard' && <LiveDashboard devices={devices} positions={positions} />}
             {activeTab === 'route' && <RoutePlayback devices={devices} token={token} />}
             
-            {/* Si un usuario forzara el estado o estuviera viéndolo y reduce la pantalla, mantenemos los renders por seguridad */}
             {activeTab === 'report' && <Reports devices={devices} token={token} />}
             {activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
             
