@@ -7,8 +7,7 @@ export default function ShareLocation({ token, devices }) {
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   const [generatedUrl, setGeneratedUrl] = useState('');
 
-  // Cambia esto si tu frontend (React) está alojado en otro dominio.
-  const APP_URL = 'https://api.labtesting.online'; 
+  const APP_URL = 'https://app.labtesting.online'; // <-- Ajusta a tu dominio frontend
   const BASE_URL = 'https://api.labtesting.online';
 
   useEffect(() => {
@@ -16,13 +15,11 @@ export default function ShareLocation({ token, devices }) {
     // eslint-disable-next-line
   }, [token]);
 
-  // Buscar todos los usuarios creados como "Enlaces Compartidos"
   const fetchSharedLinks = async () => {
     try {
       const res = await fetch(`${BASE_URL}/api/users`, { headers: { 'Authorization': `Basic ${token}` } });
       if (res.ok) {
         const users = await res.json();
-        // Filtramos solo los usuarios que creamos con el atributo "isShareLink"
         const links = users.filter(u => u.attributes && u.attributes.isShareLink);
         setSharedLinks(links);
       }
@@ -53,7 +50,6 @@ export default function ShareLocation({ token, devices }) {
     const selectedDevice = devices?.find(d => d.id === parseInt(form.deviceId));
     if (!selectedDevice) return;
 
-    // Generar credenciales temporales
     const randomPassword = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     const tempEmail = `share_${Date.now()}@temp.com`;
     const expirationTime = calculateExpiration(form.duration);
@@ -72,7 +68,6 @@ export default function ShareLocation({ token, devices }) {
     };
 
     try {
-      // 1. Crear el Usuario Temporal
       const userRes = await fetch(`${BASE_URL}/api/users`, {
         method: 'POST',
         headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
@@ -82,7 +77,6 @@ export default function ShareLocation({ token, devices }) {
       if (!userRes.ok) throw new Error("Error creando enlace");
       const newUser = await userRes.json();
 
-      // 2. Vincular el GPS al Usuario Temporal
       const permRes = await fetch(`${BASE_URL}/api/permissions`, {
         method: 'POST',
         headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
@@ -91,9 +85,8 @@ export default function ShareLocation({ token, devices }) {
 
       if (!permRes.ok) throw new Error("Error asignando permisos");
 
-      // 3. GENERAR EL ENLACE PÚBLICO MÁGICO (Codificado en Base64 para Basic Auth)
       const secretToken = btoa(`${tempEmail}:${randomPassword}`);
-      const link = `${window.location.origin}/track/${secretToken}`; // Apunta a la nueva vista
+      const link = `${APP_URL}/track/${secretToken}`;
       
       setGeneratedUrl(link);
       setAdminMessage({ text: '✅ Enlace generado exitosamente.', type: 'success' });
@@ -129,14 +122,19 @@ export default function ShareLocation({ token, devices }) {
   };
 
   return (
-    <div style={{ padding: '10px' }}>
+    <div className="share-main-container">
       <style>{`
+        .share-main-container { padding: 20px 30px; overflow-y: auto; flex: 1; }
         .share-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        
         @media (max-width: 768px) {
+          .share-main-container { padding: 15px 10px; }
           .share-grid { grid-template-columns: 1fr; }
           .share-card { padding: 15px !important; }
         }
       `}</style>
+
+      <h2 style={{color:'white', margin:'0 0 20px 0'}}>Compartir Ubicación</h2>
 
       {adminMessage.text && (
         <div style={{ backgroundColor: adminMessage.type === 'success' ? '#065F46' : '#991B1B', color: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
@@ -146,11 +144,11 @@ export default function ShareLocation({ token, devices }) {
 
       <div className="share-grid">
         
-        {/* PANEL IZQUIERDO: GENERADOR */}
+        {/* PANEL IZQUIERDO */}
         <div style={styles.adminCard} className="share-card">
-          <h3 style={styles.adminCardTitle}>🌐 Nuevo Enlace para Compartir</h3>
+          <h3 style={styles.adminCardTitle}>🌐 Nuevo Enlace</h3>
           <p style={{ color: '#9CA3AF', fontSize: '12px', marginBottom: '15px' }}>
-            Genera un link seguro que caduca automáticamente. Ideal para compartir el viaje con clientes o terceros.
+            Genera un link seguro que caduca automáticamente. Ideal para clientes o terceros.
           </p>
 
           <form onSubmit={handleGenerateLink} style={styles.form}>
@@ -158,7 +156,7 @@ export default function ShareLocation({ token, devices }) {
               <label style={styles.label}>Vehículo a compartir:</label>
               <select required value={form.deviceId} onChange={e => setForm({...form, deviceId: e.target.value})} style={styles.input}>
                 <option value="">-- Seleccionar GPS --</option>
-                {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {devices?.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
 
@@ -178,7 +176,6 @@ export default function ShareLocation({ token, devices }) {
             </button>
           </form>
 
-          {/* RESULTADO DEL LINK */}
           {generatedUrl && (
             <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px dashed #10B981', borderRadius: '8px' }}>
               <label style={{ ...styles.label, color: '#10B981' }}>Enlace listo para enviar:</label>
@@ -190,9 +187,9 @@ export default function ShareLocation({ token, devices }) {
           )}
         </div>
 
-        {/* PANEL DERECHO: ENLACES ACTIVOS */}
+        {/* PANEL DERECHO */}
         <div style={styles.adminCard} className="share-card">
-          <h3 style={styles.adminCardTitle}>📡 Enlaces Activos / Programados ({sharedLinks.length})</h3>
+          <h3 style={styles.adminCardTitle}>📡 Enlaces Activos ({sharedLinks.length})</h3>
           
           <div style={{ overflowX: 'auto' }}>
             <table style={styles.table}>
@@ -200,17 +197,16 @@ export default function ShareLocation({ token, devices }) {
                 <tr>
                   <th style={styles.th}>Vehículo</th>
                   <th style={styles.th}>Caduca en</th>
-                  <th style={styles.th}>Enlace (Token)</th>
+                  <th style={styles.th}>Enlace</th>
                   <th style={styles.th}>Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {sharedLinks.length === 0 ? (
-                  <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#6B7280' }}>No hay enlaces compartidos activos.</td></tr>
+                  <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#6B7280' }}>No hay enlaces activos.</td></tr>
                 ) : (
                   sharedLinks.map(link => {
                     const isExpired = new Date(link.expirationTime) < new Date();
-                    
                     return (
                       <tr key={link.id} style={{ ...styles.tr, opacity: isExpired ? 0.5 : 1 }}>
                         <td style={styles.td}>
@@ -226,7 +222,10 @@ export default function ShareLocation({ token, devices }) {
                         </td>
                         <td style={styles.td}>
                           <button 
-                            onClick={() => copyToClipboard(`${APP_URL}/?token=${link.attributes?.token}`)} 
+                            onClick={() => {
+                              const creds = btoa(`${link.email}:${link.attributes?.token}`);
+                              copyToClipboard(`${APP_URL}/track/${creds}`);
+                            }} 
                             style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#F3F4F6', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
                           >
                             📋 Copiar Link
@@ -261,7 +260,7 @@ const styles = {
   label: { color: '#9CA3AF', fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none', width: '100%', boxSizing: 'border-box' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '500px' },
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '450px' },
   th: { padding: '12px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '12px', color: '#9CA3AF', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #1F2937' },
   td: { padding: '12px', fontSize: '13px', verticalAlign: 'middle' }
