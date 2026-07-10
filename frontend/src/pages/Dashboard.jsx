@@ -8,6 +8,8 @@ import AdminPanel from '../components/AdminPanel';
 import Alerts from '../components/Alerts';
 import WorkRoutesReport from '../components/WorkRoutesReport'; 
 import Geofences from '../components/Geofences';
+import ShareLocation from '../components/ShareLocation';
+
 
 const MenuIcon = ({ path }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -299,6 +301,11 @@ export default function Dashboard() {
               <MenuIcon path="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 0 1-3.46 0" /> 
             </div>
 
+            <div onClick={() => setActiveTab('share')} title="Compartir Ubicación" style={{...styles.navItem, ...(activeTab === 'share' ? styles.navItemActive : {})}}>
+              <MenuIcon path="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13" /> 
+            </div>
+            
+
             {currentUser?.administrator && (
               <div onClick={() => setActiveTab('admin')} title="Panel de Administración" style={{...styles.navItem, ...(activeTab === 'admin' ? styles.navItemActive : {}), color: activeTab === 'admin' ? 'white' : '#F59E0B' }}>
                 <MenuIcon path="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /> 
@@ -375,6 +382,7 @@ export default function Dashboard() {
             
             {activeTab === 'geofences' && <Geofences />}
             {activeTab === 'alerts' && <Alerts devices={devices} token={token} />} 
+            {activeTab === 'share' && <ShareLocation devices={devices} token={token} />}
             {activeTab === 'admin' && <AdminPanel devices={devices} token={token} currentUser={currentUser} />}
           </div>
         </div>

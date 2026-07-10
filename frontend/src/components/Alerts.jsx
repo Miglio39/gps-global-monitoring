@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -24,15 +24,6 @@ export default function Alerts({ devices, token }) {
   const [isFetching, setIsFetching] = useState(false);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
 
-  // Lógica Responsive importada al estilo de tu LiveDashboard
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
   // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
   const BASE_URL = 'https://api.labtesting.online';
 
@@ -43,6 +34,7 @@ export default function Alerts({ devices, token }) {
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
+       
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
@@ -60,38 +52,23 @@ export default function Alerts({ devices, token }) {
   const handleRangeChange = (rangeValue) => {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
-
-    const now = new Date(); 
-    const start = new Date(now); 
-    const end = new Date(now);
-
-    if (rangeValue === 'today') { 
-      start.setHours(0, 0, 0, 0); 
-      end.setHours(23, 59, 59, 999);
+    const now = new Date(); const start = new Date(now); const end = new Date(now);
+    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
     }
-    else if (rangeValue === 'yesterday') { 
-      start.setDate(start.getDate() - 1); 
-      start.setHours(0, 0, 0, 0); 
-      end.setDate(end.getDate() - 1);
-      end.setHours(23, 59, 59, 999); 
-    }
-    else if (rangeValue === 'thisMonth') { 
-      start.setDate(1); 
-      start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999); 
-    }
-    
+    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1);
+    end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999); }
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     setReportConfig({ ...reportConfig, from: format(start), to: format(end) });
   };
 
-  useEffect(() => {
+  React.useEffect(() => {
     handleRangeChange('today');
   }, []);
 
   const handleFetchAlerts = async (e) => {
     e.preventDefault();
-
     if (!reportConfig.deviceId || !reportConfig.from || !reportConfig.to) {
       alert('Por favor completa todos los filtros.'); return;
     }
@@ -102,15 +79,14 @@ export default function Alerts({ devices, token }) {
     try {
       const fromIso = new Date(reportConfig.from).toISOString();
       const toIso = new Date(reportConfig.to).toISOString();
-
-      // CONEXIÓN ONLINE: Apuntando directamente a la nube para extraer coordenadas
+      
       const urlRoute = `${BASE_URL}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
       const resRoute = await fetch(urlRoute, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
       const routeData = resRoute.ok ? await resRoute.json() : [];
 
       let foundAlerts = [];
 
-      // LÓGICA 1: Exceso de Velocidad (Filtro Matemático Personalizado)
+      // LÓGICA 1: Exceso de Velocidad
       if (reportConfig.alertType === 'overspeed') {
         const limit = parseFloat(reportConfig.speedLimit);
         foundAlerts = routeData
@@ -122,46 +98,42 @@ export default function Alerts({ devices, token }) {
             lat: pos.latitude,
             lon: pos.longitude,
             desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit})`,
-            color: '#EF4444' // Rojo
+            color: '#EF4444' 
           }));
       } 
-      // LÓGICA 2: Eventos Nativos de Traccar (Encendidos, Apagados, Alarmas, Geocercas)
+      // LÓGICA 2: Eventos Nativos de Traccar
       else {
-        // CONEXIÓN ONLINE: Apuntando a la nube para extraer los eventos
         const urlEvents = `${BASE_URL}/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resEvents = await fetch(urlEvents, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
         const eventsData = resEvents.ok ? await resEvents.json() : [];
 
-        // Mapeamos las posiciones para encontrar rápido las coordenadas del evento
         const posMap = {};
         routeData.forEach(p => posMap[p.id] = p);
 
-        // Filtramos solo el evento que el usuario seleccionó
         const filteredEvents = eventsData.filter(ev => ev.type === reportConfig.alertType);
-
+        
         foundAlerts = filteredEvents.map(ev => {
-          const pos = posMap[ev.positionId] || {}; // Buscamos la lat/lon usando el positionId del evento
+          const pos = posMap[ev.positionId] || {}; 
           
           let title = 'Evento';
           let desc = 'Registrado por el sistema';
-          let color = '#F59E0B'; // Naranja por defecto
+          let color = '#F59E0B'; 
 
-          // Diccionario de Traducción y Estilos
-          if (ev.type === 'ignitionOn') { title = 'Motor Encendido'; desc = 'El vehículo fue encendido'; color = '#10B981'; } // Verde
-          if (ev.type === 'ignitionOff') { title = 'Motor Apagado'; desc = 'El vehículo fue apagado'; color = '#8B5CF6'; } // Morado
-          if (ev.type === 'deviceOffline') { title = 'Desconexión'; desc = 'Pérdida de señal de datos'; color = '#6B7280'; } // Gris
-          if (ev.type === 'alarm') { title = 'Alarma'; desc = ev.attributes?.alarm || 'Alarma general detectada'; color = '#EF4444'; } // Rojo
-          if (ev.type === 'deviceStopped') { title = 'Parada'; desc = 'El vehículo se detuvo'; color = '#3B82F6'; } // Azul
+          if (ev.type === 'ignitionOn') { title = 'Motor Encendido'; desc = 'El vehículo fue encendido'; color = '#10B981'; } 
+          if (ev.type === 'ignitionOff') { title = 'Motor Apagado'; desc = 'El vehículo fue apagado'; color = '#8B5CF6'; } 
+          if (ev.type === 'deviceOffline') { title = 'Desconexión'; desc = 'Pérdida de señal de datos'; color = '#6B7280'; } 
+          if (ev.type === 'alarm') { title = 'Alarma'; desc = ev.attributes?.alarm || 'Alarma general detectada'; color = '#EF4444'; } 
+          if (ev.type === 'deviceStopped') { title = 'Parada'; desc = 'El vehículo se detuvo'; color = '#3B82F6'; } 
           
-          // ALERTAS DE GEOCERCAS INTEGRADAS
-          if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } // Verde esmeralda
-          if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } // Naranja oscuro
+          if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } 
+          if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } 
 
           return {
             id: ev.id,
             type: title,
-            time: ev.serverTime,
-            lat: pos.latitude, // Puede ser undefined si se desconectó y no guardó posición
+            // CORRECCIÓN AQUÍ: Usar eventTime para los eventos de Traccar
+            time: ev.eventTime || ev.serverTime || ev.fixTime, 
+            lat: pos.latitude, 
             lon: pos.longitude,
             desc: desc,
             color: color
@@ -170,8 +142,7 @@ export default function Alerts({ devices, token }) {
       }
       
       setAlertData(foundAlerts);
-
-      // Centrar el mapa en la primera alerta que tenga coordenadas válidas
+      
       const firstValidAlert = foundAlerts.find(a => a.lat && a.lon);
       if (firstValidAlert) {
         setMapCenter([firstValidAlert.lat, firstValidAlert.lon]);
@@ -182,7 +153,7 @@ export default function Alerts({ devices, token }) {
       }
 
     } catch (err) { 
-      console.error(err);
+      console.error(err); 
       alert("Error al conectarse con el servidor de Traccar.");
     }
     
@@ -190,25 +161,12 @@ export default function Alerts({ devices, token }) {
   };
 
   return (
-    <main style={{
-      flex: 1, 
-      padding: isMobile ? '15px' : '20px 30px', // Ajuste padding móvil
-      display: 'flex', 
-      flexDirection: 'column', 
-      overflowY: 'auto',
-      paddingBottom: isMobile ? '80px' : '20px' // Margen inferior para barra de navegación móvil
-    }}>
-      <h2 style={{color:'white', margin:'0 0 20px 0', fontSize: isMobile ? '20px' : '24px'}}>Centro de Alertas y Eventos</h2>
+    <main style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
+      <h2 style={{color:'white', margin:'0 0 20px 0'}}>Centro de Alertas y Eventos</h2>
       
       {/* PANEL DE FILTROS */}
       <div style={styles.adminCard}>
-        <form onSubmit={handleFetchAlerts} style={{
-          display: 'flex', 
-          gap: '15px', 
-          flexDirection: isMobile ? 'column' : 'row', // En móvil se apilan hacia abajo
-          flexWrap: 'wrap', 
-          alignItems: isMobile ? 'stretch' : 'flex-end'
-        }}>
+        <form onSubmit={handleFetchAlerts} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
           <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
@@ -232,9 +190,8 @@ export default function Alerts({ devices, token }) {
             </select>
           </div>
 
-          {/* SOLO MOSTRAR LÍMITE DE VELOCIDAD SI SELECCIONA EXCESO DE VELOCIDAD */}
           {reportConfig.alertType === 'overspeed' && (
-            <div style={{width: isMobile ? '100%' : '100px'}}>
+            <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
             </div>
@@ -257,35 +214,22 @@ export default function Alerts({ devices, token }) {
             </>
           )}
 
-          <button type="submit" disabled={isFetching} style={{...styles.btn, width: isMobile ? '100%' : 'auto'}}>
+          <button type="submit" disabled={isFetching} style={styles.btn}>
             {isFetching ? 'Analizando...' : '🚨 Extraer Alertas'}
           </button>
 
         </form>
       </div>
 
-      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA (Se apilan en móvil) */}
-      <div style={{ 
-        display: 'flex', 
-        flexDirection: isMobile ? 'column' : 'row', 
-        gap: '20px', 
-        marginTop: '20px', 
-        flex: 1, 
-        minHeight: isMobile ? 'auto' : '50vh' 
-      }}>
+      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
+      <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
         
         {/* MAPA DE ALERTAS */}
-        <div style={{
-          ...styles.mapContainer, 
-          flex: isMobile ? 'none' : 2, 
-          height: isMobile ? '350px' : 'auto', // Altura fija en móvil para que no desaparezca
-          minHeight: isMobile ? '350px' : 'auto'
-        }}>
+        <div style={{...styles.mapContainer, flex: 2}}>
           <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
             {alertData.map((alert, index) => {
-              // Si no tiene coordenadas válidas, no pintamos el marcador
               if (!alert.lat || !alert.lon) return null;
               
               return (
@@ -297,7 +241,7 @@ export default function Alerts({ devices, token }) {
                 >
                   <Popup>
                     <b style={{color: alert.color, fontSize: '14px'}}>{alert.type}</b><br/>
-                    <span style={{color:'#111827'}}><b>Fecha:</b> {new Date(alert.time).toLocaleString()}</span><br/>
+                    <span style={{color:'#111827'}}><b>Fecha:</b> {alert.time ? new Date(alert.time).toLocaleString() : 'Fecha no disponible'}</span><br/>
                     <span style={{color:'#6B7280'}}><b>Detalle:</b> {alert.desc}</span>
                   </Popup>
                 </Marker>
@@ -307,14 +251,7 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        <div style={{
-          ...styles.tableContainer, 
-          flex: isMobile ? 'none' : 1, 
-          height: isMobile ? '400px' : 'auto', // Límite de altura en móvil para poder hacer scroll
-          marginTop: 0, 
-          display: 'flex', 
-          flexDirection: 'column'
-        }}>
+        <div style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -338,7 +275,7 @@ export default function Alerts({ devices, token }) {
                       onClick={() => alert.lat && setMapCenter([alert.lat, alert.lon])}
                     >
                       <td style={styles.td}>
-                        {new Date(alert.time).toLocaleString()}
+                        {alert.time ? new Date(alert.time).toLocaleString() : 'Desconocida'}
                         {!alert.lat && <span style={{display: 'block', fontSize: '9px', color: '#EF4444'}}>Sin posición GPS</span>}
                       </td>
                       <td style={styles.td}>
@@ -370,4 +307,4 @@ const styles = {
   tableHead: { color: 'white', fontSize: '12px' },
   th: { padding: '10px', borderBottom: '1px solid #1F2937' },
   td: { padding: '10px', fontSize: '12px', borderBottom: '1px solid #1F2937' }
-};
+};  

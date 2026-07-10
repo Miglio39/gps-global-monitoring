@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 
 export default function DeviceManagement({ token, devices }) {
-  // El puerto inicia vacío, forzando al usuario a seleccionar una marca
   const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '' });
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
+  
+  // NUEVO: Estado para el buscador de dispositivos
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const BASE_URL = 'https://api.labtesting.online';
 
   const handleSaveDevice = async (e) => {
     e.preventDefault();
@@ -12,32 +16,30 @@ export default function DeviceManagement({ token, devices }) {
         name: deviceForm.placa,
         uniqueId: deviceForm.imei,
         phone: deviceForm.sim,
-        attributes: { puerto: parseInt(deviceForm.puerto) } // Se asegura de guardarlo como número
+        attributes: { puerto: parseInt(deviceForm.puerto) } 
     };
 
     if (editingDeviceId) {
         payload.id = editingDeviceId;
-        const res = await fetch(`/api/devices/${editingDeviceId}`, { 
+        const res = await fetch(`${BASE_URL}/api/devices/${editingDeviceId}`, { 
             method: 'PUT', 
             headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
             body: JSON.stringify(payload) 
         });
-
         if (res.ok) { 
             setAdminMessage({ text: 'GPS Actualizado exitosamente.', type: 'success' });
             setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' }); 
             setEditingDeviceId(null);
         }
     } else {
-        const res = await fetch('https://api.labtesting.online/api/devices', { 
+        const res = await fetch(`${BASE_URL}/api/devices`, { 
             method: 'POST', 
             headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
             body: JSON.stringify(payload) 
         });
-
         if (res.ok) { 
             setAdminMessage({ text: 'GPS registrado exitosamente.', type: 'success' });
-            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' }); 
+            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' });
         } else {
             setAdminMessage({ text: 'Error: El IMEI ya está registrado.', type: 'error' });
         }
@@ -57,7 +59,7 @@ export default function DeviceManagement({ token, devices }) {
 
   const handleDeleteDevice = async (id) => {
       if (!window.confirm("🚨 ¿Eliminar este dispositivo permanentemente?")) return;
-      const res = await fetch(`/api/devices/${id}`, { method: 'DELETE', headers: { 'Authorization': `Basic ${token}` } });
+      const res = await fetch(`${BASE_URL}/api/devices/${id}`, { method: 'DELETE', headers: { 'Authorization': `Basic ${token}` } });
       if (res.ok) { 
           setAdminMessage({ text: 'GPS eliminado correctamente.', type: 'success' });
           if (editingDeviceId === id) {
@@ -67,8 +69,30 @@ export default function DeviceManagement({ token, devices }) {
       }
   };
 
+  // NUEVO: Lógica de Filtrado (Buscador)
+  const filteredDevices = devices.filter(d => {
+    const term = searchTerm.toLowerCase();
+    return (
+      (d.name && d.name.toLowerCase().includes(term)) ||
+      (d.uniqueId && d.uniqueId.toLowerCase().includes(term)) ||
+      (d.phone && d.phone.toLowerCase().includes(term))
+    );
+  });
+
   return (
     <div>
+      <style>{`
+        .dev-form-row { display: flex; gap: 15px; flex-wrap: wrap; }
+        .dev-form-input { flex: 1; min-width: 200px; }
+        .search-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+        @media (max-width: 768px) {
+          .dev-form-row { flex-direction: column; gap: 10px; }
+          .dev-form-input { width: 100%; min-width: auto; }
+          .dev-card-container { padding: 15px !important; }
+          .search-input { width: 100% !important; max-width: none !important; }
+        }
+      `}</style>
+
       {adminMessage.text && (
           <div style={{backgroundColor: adminMessage.type === 'success' ? '#065F46' : '#991B1B', color: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px'}}>
               {adminMessage.text}
@@ -76,20 +100,20 @@ export default function DeviceManagement({ token, devices }) {
       )}
       
       {/* FORMULARIO DE GPS */}
-      <div style={{...styles.adminCard, border: editingDeviceId ? '1px solid #10B981' : '1px solid #1F2937'}}>
+      <div style={{...styles.adminCard, border: editingDeviceId ? '1px solid #10B981' : '1px solid #1F2937'}} className="dev-card-container">
         <h3 style={styles.adminCardTitle}>{editingDeviceId ? 'Editar Dispositivo GPS ✏️' : 'Registro de Nuevo GPS'}</h3>
         <form onSubmit={handleSaveDevice} style={styles.form}>
-          <div style={{display: 'flex', gap: '15px', flexWrap: 'wrap'}}>
-            <input type="text" placeholder="Placa / Alias" required value={deviceForm.placa} onChange={e => setDeviceForm({...deviceForm, placa: e.target.value})} style={{...styles.input, flex: 1}} />
-            <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={{...styles.input, flex: 1}} />
-            <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={{...styles.input, flex: 1}} />
+          <div className="dev-form-row">
+            <input type="text" placeholder="Placa / Alias" required value={deviceForm.placa} onChange={e => setDeviceForm({...deviceForm, placa: e.target.value})} style={styles.input} className="dev-form-input" />
+            <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={styles.input} className="dev-form-input" />
+            <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={styles.input} className="dev-form-input" />
             
-            {/* AQUÍ ESTÁ LA MEJORA: SELECTOR AUTOMÁTICO DE PUERTOS POR MARCA */}
             <select 
                 required 
                 value={deviceForm.puerto} 
                 onChange={e => setDeviceForm({...deviceForm, puerto: e.target.value})} 
-                style={{...styles.input, flex: 1, color: deviceForm.puerto ? 'white' : '#9CA3AF'}}
+                style={{...styles.input, color: deviceForm.puerto ? 'white' : '#9CA3AF'}}
+                className="dev-form-input"
             >
                 <option value="" disabled>-- Seleccionar Marca del GPS --</option>
                 <option value="5023">Concox / Jimi IoT (5023)</option>
@@ -101,21 +125,36 @@ export default function DeviceManagement({ token, devices }) {
             </select>
           </div>
 
-          <div style={{display: 'flex', gap: '10px'}}>
-              <button type="submit" style={{...styles.btn, backgroundColor:'#10B981', width: '200px'}}>
+          <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
+              <button type="submit" style={{...styles.btn, backgroundColor:'#10B981', flex: 1, maxWidth: '250px'}}>
                   {editingDeviceId ? 'Guardar Cambios' : 'Registrar Equipo'}
               </button>
               {editingDeviceId && (
-                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' })}} style={{...styles.btn, backgroundColor:'#374151', width: '150px'}}>Cancelar</button>
+                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' })}} style={{...styles.btn, backgroundColor:'#374151', flex: 1, maxWidth: '150px'}}>Cancelar</button>
               )}
           </div>
         </form>
       </div>
 
       {/* TABLA DE DISPOSITIVOS */}
-      <div style={{...styles.adminCard, marginTop: '20px'}}>
-        <h3 style={styles.adminCardTitle}>Hardware Registrado ({devices.length})</h3>
-        <div style={{overflowX: 'auto'}}>
+      <div style={{...styles.adminCard, marginTop: '20px'}} className="dev-card-container">
+        
+        {/* NUEVO: Contenedor del Buscador */}
+        <div className="search-container">
+          <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
+            Hardware Registrado ({filteredDevices.length})
+          </h3>
+          <input 
+            type="text" 
+            placeholder="🔍 Buscar placa, IMEI o SIM..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{...styles.input, width: '100%', maxWidth: '300px'}}
+            className="search-input"
+          />
+        </div>
+
+        <div style={{overflowX: 'auto', borderTop: '1px solid #1F2937', paddingTop: '10px'}}>
             <table style={styles.table}>
                 <thead>
                     <tr>
@@ -128,27 +167,34 @@ export default function DeviceManagement({ token, devices }) {
                     </tr>
                 </thead>
                 <tbody>
-                    {devices.map(d => {
-                        // Pequeña lógica visual para mostrar el nombre de la marca en la tabla si se conoce el puerto
-                        const p = d.attributes?.puerto;
-                        let marcaTexto = p ? `${p}` : 'N/A';
-                        if (p === 5023) marcaTexto = 'Concox (5023)';
-                        if (p === 5159) marcaTexto = 'Protrack (5159)';
-                        
-                        return (
-                            <tr key={d.id} style={styles.tr}>
-                                <td style={styles.td}><strong>{d.name}</strong></td>
-                                <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
-                                <td style={styles.td}>{d.phone || 'N/A'}</td>
-                                <td style={styles.td}>{marcaTexto}</td>
-                                <td style={styles.td}>{d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca'}</td>
-                                <td style={styles.td}>
-                                    <button onClick={() => handleEditClick(d)} style={styles.actionBtnEdit}>✏️</button>
-                                    <button onClick={() => handleDeleteDevice(d.id)} style={styles.actionBtnDelete}>🗑️</button>
-                                </td>
-                            </tr>
-                        )
-                    })}
+                    {filteredDevices.length === 0 ? (
+                      <tr><td colSpan="6" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
+                    ) : (
+                      filteredDevices.map(d => {
+                          const p = d.attributes?.puerto;
+                          let marcaTexto = p ? `${p}` : 'N/A';
+                          if (p === 5023) marcaTexto = 'Concox (5023)';
+                          if (p === 5159) marcaTexto = 'Protrack (5159)';
+                          if (p === 5013) marcaTexto = 'SinoTrack (5013)';
+                          if (p === 5001) marcaTexto = 'Coban (5001)';
+                          if (p === 5027) marcaTexto = 'Teltonika (5027)';
+                          if (p === 5093) marcaTexto = 'Ruptela (5093)';
+                          
+                          return (
+                              <tr key={d.id} style={styles.tr}>
+                                  <td style={styles.td}><strong>{d.name}</strong></td>
+                                  <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
+                                  <td style={styles.td}>{d.phone || 'N/A'}</td>
+                                  <td style={styles.td}>{marcaTexto}</td>
+                                  <td style={styles.td}>{d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca'}</td>
+                                  <td style={styles.td}>
+                                      <button onClick={() => handleEditClick(d)} style={styles.actionBtnEdit}>✏️</button>
+                                      <button onClick={() => handleDeleteDevice(d.id)} style={styles.actionBtnDelete}>🗑️</button>
+                                  </td>
+                              </tr>
+                          )
+                      })
+                    )}
                 </tbody>
             </table>
         </div>
@@ -160,10 +206,10 @@ export default function DeviceManagement({ token, devices }) {
 const styles = {
   adminCard: { backgroundColor: '#111827', padding: '25px', borderRadius: '12px', border: '1px solid #1F2937' },
   adminCardTitle: { color: 'white', fontSize: '16px', margin: '0 0 20px 0', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
-  form: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none', minWidth: '200px' },
+  form: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white' },
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '800px' },
   th: { padding: '12px 15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '13px', color: '#9CA3AF', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #1F2937' },
   td: { padding: '12px 15px', fontSize: '14px', whiteSpace: 'nowrap' },

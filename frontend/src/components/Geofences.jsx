@@ -14,44 +14,47 @@ const MapClickHandler = ({ onMapClick }) => {
 
 export default function Geofences() {
   const [geofences, setGeofences] = useState([]);
+  const [devices, setDevices] = useState([]); 
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Estados de creación de la nueva geocerca
   const [name, setName] = useState('');
-  const [radius, setRadius] = useState(300); // 300 metros de radio base
+  const [radius, setRadius] = useState(300);
   const [center, setCenter] = useState(null);
+  const [selectedDevice, setSelectedDevice] = useState('ALL'); 
 
   const BASE_URL = 'https://api.labtesting.online/api';
   const token = localStorage.getItem('traccar_token');
 
-  // Headers estandarizados para Traccar
   const getHeaders = () => ({
     'Content-Type': 'application/json',
     'Accept': 'application/json',
     'Authorization': `Basic ${token}`
   });
 
-  // 1. Obtener Geocercas desde el Servidor
-  const fetchGeofences = async () => {
+  // 1. Obtener Geocercas y Dispositivos al cargar
+  const fetchData = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const response = await fetch(`${BASE_URL}/geofences`, { headers: getHeaders() });
-      if (response.ok) {
-        const data = await response.json();
-        setGeofences(data);
-      }
+      const geoRes = await fetch(`${BASE_URL}/geofences`, { headers: getHeaders() });
+      if (geoRes.ok) setGeofences(await geoRes.json());
+
+      const devRes = await fetch(`${BASE_URL}/devices`, { headers: getHeaders() });
+      if (devRes.ok) setDevices(await devRes.json());
+
     } catch (error) {
-      console.error("Error al cargar geocercas:", error);
+      console.error("Error al cargar datos:", error);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchGeofences();
+    fetchData();
   }, [token]);
 
-  // 2. Guardar Geocerca (Formato WKT)
+  // 2. Guardar Geocerca Y VINCULAR
   const handleSaveGeofence = async (e) => {
     e.preventDefault();
     if (!center || !name.trim()) {
@@ -59,17 +62,25 @@ export default function Geofences() {
       return;
     }
 
-    // Convertir datos al formato WKT (Well-Known Text) requerido por Traccar
+    setIsSaving(true);
     const areaWKT = `CIRCLE (${center[0]} ${center[1]}, ${radius})`;
+
+    // Identificar el nombre del vehículo para guardarlo como atributo visible
+    const carName = selectedDevice === 'ALL' 
+      ? 'Todos los vehículos' 
+      : devices.find(d => d.id === Number(selectedDevice))?.name || 'Vehículo específico';
 
     const geofencePayload = {
       name: name,
-      description: 'Creado desde Global GPS Monitor',
+      description: `Asignado a: ${carName}`, // Lo guardamos en la descripción para compatibilidad
       area: areaWKT,
-      attributes: {}
+      attributes: {
+        assignedTo: carName // Lo guardamos en los atributos extra de Traccar
+      }
     };
 
     try {
+      // PASO A: Crear la Geocerca
       const response = await fetch(`${BASE_URL}/geofences`, {
         method: 'POST',
         headers: getHeaders(),
@@ -77,19 +88,46 @@ export default function Geofences() {
       });
 
       if (response.ok) {
+        const newGeofence = await response.json(); 
+
+        // PASO B: Lógica de vinculación inteligente
+        if (selectedDevice === 'ALL') {
+          const permissionPromises = devices.map(device => 
+            fetch(`${BASE_URL}/permissions`, {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({ deviceId: device.id, geofenceId: newGeofence.id })
+            })
+          );
+          await Promise.all(permissionPromises);
+          alert('✅ Geocerca creada y vinculada a TODOS los vehículos.');
+        } else {
+          await fetch(`${BASE_URL}/permissions`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ deviceId: Number(selectedDevice), geofenceId: newGeofence.id })
+          });
+          alert(`✅ Geocerca creada y vinculada exclusivamente a: ${carName}.`);
+        }
+
+        // Limpiar formulario
         setName('');
         setCenter(null);
         setRadius(300);
-        fetchGeofences(); // Recargar el listado
+        setSelectedDevice('ALL');
+        fetchData(); // Recargar el listado
       } else {
-        alert('Error en el servidor al intentar registrar la geocerca.');
+        alert('❌ Error en el servidor al intentar registrar la geocerca.');
       }
     } catch (error) {
-      console.error('Error al guardar geocerca:', error);
+      console.error('Error al guardar y vincular geocerca:', error);
+      alert('❌ Hubo un error de red al procesar la solicitud.');
     }
+    
+    setIsSaving(false);
   };
 
-  // 3. Eliminar Geocerca de la base de datos
+  // 3. Eliminar Geocerca
   const handleDeleteGeofence = async (id) => {
     if (!window.confirm('¿Deseas eliminar permanentemente esta geocerca?')) return;
     try {
@@ -98,239 +136,62 @@ export default function Geofences() {
         headers: getHeaders()
       });
       if (response.ok) {
-        fetchGeofences();
+        fetchData();
       }
     } catch (error) {
       console.error('Error al eliminar geocerca:', error);
     }
   };
 
-  // Función de soporte para procesar y dibujar el WKT de Traccar en Leaflet
   const parseWKTtoCircle = (wktString) => {
     if (wktString && wktString.startsWith('CIRCLE')) {
       const matches = wktString.match(/CIRCLE \(([-\d.]+) ([-\d.]+), ([-\d.]+)\)/);
-      if (matches) {
-        return {
-          lat: parseFloat(matches[1]),
-          lng: parseFloat(matches[2]),
-          radius: parseFloat(matches[3])
-        };
-      }
+      if (matches) return { lat: parseFloat(matches[1]), lng: parseFloat(matches[2]), radius: parseFloat(matches[3]) };
     }
     return null;
+  };
+
+  // Función de apoyo para extraer el nombre asignado de las zonas antiguas o nuevas
+  const getAssignedName = (geo) => {
+    if (geo.attributes?.assignedTo) return geo.attributes.assignedTo;
+    if (geo.description && geo.description.includes('Asignado a:')) return geo.description.replace('Asignado a: ', '');
+    return 'Todos los vehículos'; // Fallback para geocercas creadas antes de esta actualización
   };
 
   return (
     <>
       <style>{`
-        .geo-layout {
-          display: flex;
-          height: 100%;
-          width: 100%;
-          background-color: #0B1120;
-          font-family: 'Inter', sans-serif;
-          color: #9CA3AF;
-        }
-
-        .geo-panel {
-          width: 320px;
-          background-color: #111827;
-          border-right: 1px solid #1F2937;
-          display: flex;
-          flex-direction: column;
-          padding: 20px;
-          overflow-y: auto;
-          box-sizing: border-box;
-          gap: 20px;
-        }
-
-        .geo-map-container {
-          flex: 1;
-          position: relative;
-          height: 100%;
-        }
-
-        .geo-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #FFFFFF;
-          margin: 0 0 4px 0;
-        }
-
-        .geo-subtitle {
-          font-size: 12px;
-          color: #6B7280;
-          margin: 0;
-        }
-
-        .geo-form {
-          background-color: #0B1120;
-          border: 1px solid #1F2937;
-          padding: 15px;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .geo-input {
-          background-color: #111827;
-          border: 1px solid #1F2937;
-          border-radius: 6px;
-          padding: 8px 12px;
-          color: #FFFFFF;
-          font-size: 13px;
-          outline: none;
-          transition: border 0.2s ease;
-        }
-
-        .geo-input:focus {
-          border-color: #2563EB;
-        }
-
-        .geo-label {
-          font-size: 12px;
-          color: #9CA3AF;
-          display: flex;
-          justify-content: space-between;
-        }
-
-        .geo-slider {
-          width: 100%;
-          accent-color: #2563EB;
-          cursor: pointer;
-          margin: 4px 0;
-        }
-
-        .geo-status-box {
-          font-size: 12px;
-          padding: 8px;
-          border-radius: 6px;
-          text-align: center;
-          font-weight: 500;
-        }
-
-        .status-waiting {
-          background-color: rgba(245, 158, 11, 0.1);
-          color: #F59E0B;
-          border: 1px solid rgba(245, 158, 11, 0.2);
-          animation: pulseGeo 2s infinite ease-in-out;
-        }
-
-        .status-ready {
-          background-color: rgba(16, 185, 129, 0.1);
-          color: #10B981;
-          border: 1px solid rgba(16, 185, 129, 0.2);
-        }
-
-        .geo-btn-submit {
-          background-color: #2563EB;
-          color: #FFFFFF;
-          border: none;
-          border-radius: 6px;
-          padding: 10px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: background-color 0.2s ease;
-        }
-
-        .geo-btn-submit:hover:not(:disabled) {
-          background-color: #1D4ED8;
-        }
-
-        .geo-btn-submit:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .geo-list-title {
-          font-size: 13px;
-          font-weight: 600;
-          color: #FFFFFF;
-          margin: 5px 0 10px 0;
-          border-bottom: 1px solid #1F2937;
-          padding-bottom: 6px;
-        }
-
-        .geo-list-wrapper {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .geo-card {
-          background-color: #0B1120;
-          border: 1px solid #1F2937;
-          border-radius: 6px;
-          padding: 10px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .geo-card-info {
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-
-        .geo-card-name {
-          font-size: 13px;
-          font-weight: 600;
-          color: #E5E7EB;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .geo-card-desc {
-          font-size: 11px;
-          color: #4B5563;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          margin-top: 2px;
-        }
-
-        .geo-btn-delete {
-          background: transparent;
-          border: none;
-          color: #EF4444;
-          cursor: pointer;
-          font-size: 14px;
-          padding: 4px;
-          border-radius: 4px;
-          transition: background-color 0.2s ease;
-        }
-
-        .geo-btn-delete:hover {
-          background-color: rgba(239, 68, 68, 0.1);
-        }
-
-        @keyframes pulseGeo {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.6; }
-        }
+        .geo-layout { display: flex; height: 100%; width: 100%; background-color: #0B1120; font-family: 'Inter', sans-serif; color: #9CA3AF; }
+        .geo-panel { width: 320px; background-color: #111827; border-right: 1px solid #1F2937; display: flex; flex-direction: column; padding: 20px; overflow-y: auto; box-sizing: border-box; gap: 20px; }
+        .geo-map-container { flex: 1; position: relative; height: 100%; }
+        .geo-title { font-size: 16px; font-weight: 700; color: #FFFFFF; margin: 0 0 4px 0; }
+        .geo-subtitle { font-size: 12px; color: #6B7280; margin: 0; }
+        .geo-form { background-color: #0B1120; border: 1px solid #1F2937; padding: 15px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; }
+        .geo-input { background-color: #111827; border: 1px solid #1F2937; border-radius: 6px; padding: 8px 12px; color: #FFFFFF; font-size: 13px; outline: none; transition: border 0.2s ease; width: 100%; }
+        .geo-input:focus { border-color: #2563EB; }
+        .geo-label { font-size: 12px; color: #9CA3AF; display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .geo-slider { width: 100%; accent-color: #2563EB; cursor: pointer; margin: 4px 0; }
+        .geo-status-box { font-size: 12px; padding: 8px; border-radius: 6px; text-align: center; font-weight: 500; }
+        .status-waiting { background-color: rgba(245, 158, 11, 0.1); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.2); animation: pulseGeo 2s infinite ease-in-out; }
+        .status-ready { background-color: rgba(16, 185, 129, 0.1); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.2); }
+        .geo-btn-submit { background-color: #2563EB; color: #FFFFFF; border: none; border-radius: 6px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 0.2s ease; }
+        .geo-btn-submit:hover:not(:disabled) { background-color: #1D4ED8; }
+        .geo-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+        .geo-list-title { font-size: 13px; font-weight: 600; color: #FFFFFF; margin: 5px 0 10px 0; border-bottom: 1px solid #1F2937; padding-bottom: 6px; }
+        .geo-list-wrapper { display: flex; flex-direction: column; gap: 8px; }
+        .geo-card { background-color: #0B1120; border: 1px solid #1F2937; border-radius: 6px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .geo-card-info { display: flex; flex-direction: column; overflow: hidden; }
+        .geo-card-name { font-size: 13px; font-weight: 600; color: #E5E7EB; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .geo-card-desc { font-size: 11px; color: #4B5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+        .geo-btn-delete { background: transparent; border: none; color: #EF4444; cursor: pointer; font-size: 14px; padding: 4px; border-radius: 4px; transition: background-color 0.2s ease; }
+        .geo-btn-delete:hover { background-color: rgba(239, 68, 68, 0.1); }
+        @keyframes pulseGeo { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
         /* AJUSTES RESPONSIVOS COMPATIBLES CON MÓVIL */
         @media (max-width: 768px) {
-          .geo-layout {
-            flex-direction: column;
-          }
-          .geo-panel {
-            width: 100%;
-            height: 260px;
-            border-right: none;
-            border-bottom: 1px solid #1F2937;
-            padding: 12px;
-            gap: 12px;
-          }
-          .geo-map-container {
-            flex: 1;
-            height: 100%;
-          }
+          .geo-layout { flex-direction: column; }
+          .geo-panel { width: 100%; height: 320px; border-right: none; border-bottom: 1px solid #1F2937; padding: 12px; gap: 12px; }
+          .geo-map-container { flex: 1; height: 100%; }
         }
       `}</style>
 
@@ -345,6 +206,26 @@ export default function Geofences() {
 
           {/* Formulario de Registro */}
           <form onSubmit={handleSaveGeofence} className="geo-form">
+            
+            {/* Menú desplegable para asignar la geocerca */}
+            <div>
+              <label className="geo-label">Asignar a:</label>
+              <select 
+                value={selectedDevice} 
+                onChange={(e) => setSelectedDevice(e.target.value)}
+                className="geo-input"
+              >
+                <option value="ALL">🚗 Todos los vehículos de la flota</option>
+                <optgroup label="Vehículos Específicos">
+                  {devices.map(device => (
+                    <option key={device.id} value={device.id}>
+                      {device.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
             <input 
               type="text" 
               placeholder="Nombre de la geocerca..."
@@ -357,13 +238,15 @@ export default function Geofences() {
             <div>
               <div className="geo-label">
                 <span>Radio asignado</span>
-                <span style={{ color: '#2563EB', fontWeight: 'bold' }}>{radius}m</span>
+                <span style={{ color: '#2563EB', fontWeight: 'bold' }}>
+                  {radius >= 1000 ? `${(radius / 1000).toFixed(1)} km` : `${radius} m`}
+                </span>
               </div>
               <input 
                 type="range" 
                 min="50" 
-                max="10000" 
-                step="50"
+                max="20000" 
+                step="100"
                 value={radius}
                 onChange={(e) => setRadius(Number(e.target.value))}
                 className="geo-slider"
@@ -382,10 +265,10 @@ export default function Geofences() {
 
             <button 
               type="submit" 
-              disabled={!center || !name.trim()}
+              disabled={!center || !name.trim() || isSaving}
               className="geo-btn-submit"
             >
-              Guardar zona
+              {isSaving ? 'Vinculando...' : 'Guardar zona'}
             </button>
           </form>
 
@@ -402,12 +285,18 @@ export default function Geofences() {
               
               {geofences.map((geo) => {
                 const circleInfo = parseWKTtoCircle(geo.area);
+                const assignedName = getAssignedName(geo); // Usar la nueva función
+
                 return (
                   <div key={geo.id} className="geo-card">
                     <div className="geo-card-info">
                       <span className="geo-card-name">{geo.name}</span>
                       <span className="geo-card-desc">
-                        {circleInfo ? `Radio: ${circleInfo.radius}m` : 'Área poligonal'}
+                        {circleInfo ? (circleInfo.radius >= 1000 ? `Radio: ${(circleInfo.radius / 1000).toFixed(1)}km` : `Radio: ${circleInfo.radius}m`) : 'Área poligonal'}
+                      </span>
+                      {/* ETIQUETA VISUAL DE ASIGNACIÓN EN LA LISTA */}
+                      <span style={{ fontSize: '10px', color: '#3B82F6', marginTop: '4px', fontWeight: '700' }}>
+                        🎯 {assignedName}
                       </span>
                     </div>
                     <button 
@@ -437,12 +326,12 @@ export default function Geofences() {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             />
             
-            {/* Listener de clic sobre el mapa */}
             <MapClickHandler onMapClick={setCenter} />
 
-            {/* Dibujado de Geocercas Almacenadas en la API */}
             {geofences.map((geo) => {
               const circleData = parseWKTtoCircle(geo.area);
+              const assignedName = getAssignedName(geo); // Usar la nueva función
+
               if (circleData) {
                 return (
                   <Circle 
@@ -454,7 +343,13 @@ export default function Geofences() {
                     <Popup>
                       <div style={{ color: '#111827', fontFamily: 'sans-serif' }}>
                         <strong style={{ fontSize: '13px' }}>{geo.name}</strong><br/>
-                        <span style={{ fontSize: '11px', color: '#6B7280' }}>Radio: {circleData.radius}m</span>
+                        <span style={{ fontSize: '11px', color: '#6B7280' }}>
+                          Radio: {circleData.radius >= 1000 ? `${(circleData.radius / 1000).toFixed(1)} km` : `${circleData.radius} m`}
+                        </span><br/>
+                        {/* ETIQUETA VISUAL DE ASIGNACIÓN EN EL POPUP DEL MAPA */}
+                        <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 'bold', display: 'block', marginTop: '3px' }}>
+                          🎯 {assignedName}
+                        </span>
                       </div>
                     </Popup>
                   </Circle>
@@ -463,7 +358,6 @@ export default function Geofences() {
               return null;
             })}
 
-            {/* Círculo de Previsualización en Tiempo Real al Crear una Nueva Zona */}
             {center && (
               <Circle 
                 center={center} 
