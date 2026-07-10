@@ -124,13 +124,48 @@ export default function ShareLocation({ token, devices }) {
   return (
     <div className="share-main-container">
       <style>{`
-        .share-main-container { padding: 20px 30px; overflow-y: auto; flex: 1; }
-        .share-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        /* ESTILOS FLUIDOS Y RESPONSIVOS */
+        .share-main-container { 
+          padding: 20px 30px; 
+          overflow-y: auto; 
+          flex: 1; 
+          width: 100%; 
+          box-sizing: border-box; 
+        }
+        .share-flex { 
+          display: flex; 
+          gap: 20px; 
+          align-items: flex-start; 
+        }
+        .share-card-left { 
+          flex: 1; 
+          min-width: 280px; 
+        }
+        .share-card-right { 
+          flex: 2; 
+          min-width: 0; /* Clave para que Flexbox no se desborde con tablas largas */
+        }
+        .table-responsive-wrapper {
+          width: 100%;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch; /* Suavidad en iOS */
+        }
         
+        /* ADAPTACIÓN A MÓVILES */
         @media (max-width: 768px) {
-          .share-main-container { padding: 15px 10px; }
-          .share-grid { grid-template-columns: 1fr; }
-          .share-card { padding: 15px !important; }
+          .share-main-container { 
+            padding: 15px 15px 90px 15px; /* 90px abajo para librar el menú móvil inferior */
+          }
+          .share-flex { 
+            flex-direction: column; 
+          }
+          .share-card-left, .share-card-right { 
+            width: 100%; 
+            flex: none; 
+          }
+          .share-card-right {
+            padding: 15px !important;
+          }
         }
       `}</style>
 
@@ -142,10 +177,10 @@ export default function ShareLocation({ token, devices }) {
         </div>
       )}
 
-      <div className="share-grid">
+      <div className="share-flex">
         
-        {/* PANEL IZQUIERDO */}
-        <div style={styles.adminCard} className="share-card">
+        {/* PANEL IZQUIERDO: GENERADOR */}
+        <div style={styles.adminCard} className="share-card-left">
           <h3 style={styles.adminCardTitle}>🌐 Nuevo Enlace</h3>
           <p style={{ color: '#9CA3AF', fontSize: '12px', marginBottom: '15px' }}>
             Genera un link seguro que caduca automáticamente. Ideal para clientes o terceros.
@@ -177,7 +212,7 @@ export default function ShareLocation({ token, devices }) {
           </form>
 
           {generatedUrl && (
-            <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px dashed #10B981', borderRadius: '8px' }}>
+            <div style={{ marginTop: '20px', padding: '15px', backgroundColor: 'rgba(16, 185, 129, 0.1)', border: '1px dashed #10B981', borderRadius: '8px', wordBreak: 'break-all' }}>
               <label style={{ ...styles.label, color: '#10B981' }}>Enlace listo para enviar:</label>
               <input type="text" readOnly value={generatedUrl} style={{ ...styles.input, backgroundColor: '#0B1120', color: '#10B981', marginBottom: '10px' }} />
               <button onClick={() => copyToClipboard(generatedUrl)} style={{ ...styles.btn, width: '100%' }}>
@@ -187,11 +222,11 @@ export default function ShareLocation({ token, devices }) {
           )}
         </div>
 
-        {/* PANEL DERECHO */}
-        <div style={styles.adminCard} className="share-card">
+        {/* PANEL DERECHO: ENLACES ACTIVOS */}
+        <div style={styles.adminCard} className="share-card-right">
           <h3 style={styles.adminCardTitle}>📡 Enlaces Activos ({sharedLinks.length})</h3>
           
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-responsive-wrapper">
             <table style={styles.table}>
               <thead>
                 <tr>
@@ -226,7 +261,7 @@ export default function ShareLocation({ token, devices }) {
                               const creds = btoa(`${link.email}:${link.attributes?.token}`);
                               copyToClipboard(`${APP_URL}/track/${creds}`);
                             }} 
-                            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#F3F4F6', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#F3F4F6', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', whiteSpace: 'nowrap' }}
                           >
                             📋 Copiar Link
                           </button>
@@ -234,7 +269,7 @@ export default function ShareLocation({ token, devices }) {
                         <td style={styles.td}>
                           <button 
                             onClick={() => handleRevokeLink(link.id)} 
-                            style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #EF4444', color: '#EF4444', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                            style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                           >
                             Revocar ✕
                           </button>
@@ -259,9 +294,9 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: '15px' },
   label: { color: '#9CA3AF', fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none', width: '100%', boxSizing: 'border-box' },
-  btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' },
+  btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s', width: '100%', boxSizing: 'border-box' },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '450px' },
   th: { padding: '12px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '12px', color: '#9CA3AF', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #1F2937' },
-  td: { padding: '12px', fontSize: '13px', verticalAlign: 'middle' }
+  td: { padding: '12px', fontSize: '13px', verticalAlign: 'middle', whiteSpace: 'nowrap' }
 };
