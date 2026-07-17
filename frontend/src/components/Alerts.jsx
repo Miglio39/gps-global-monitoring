@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+// Componente para forzar centrado de cámara
 function ChangeView({ center }) {
   const map = useMap();
   map.setView(center, map.getZoom());
@@ -11,44 +12,60 @@ function ChangeView({ center }) {
 
 export default function Alerts({ devices, token }) {
   const [reportConfig, setReportConfig] = useState({ 
-    deviceId: '', from: '', to: '', speedLimit: 80, alertType: 'overspeed' 
+    deviceId: '', 
+    from: '', 
+    to: '', 
+    speedLimit: 80,
+    alertType: 'overspeed' // Tipo de alerta por defecto
   });
   const [quickRange, setQuickRange] = useState('today');
   
   const [alertData, setAlertData] = useState([]);
+  const [routeCoords, setRouteCoords] = useState([]); // Para dibujar la ruta en el mapa
   const [isFetching, setIsFetching] = useState(false);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
 
+  // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
   const BASE_URL = 'https://api.labtesting.online';
 
+  // Marcador Dinámico (Cambia de color según el tipo de alerta)
   const createAlertMarker = (title, color) => {
     const html = `
       <div style="display: flex; flex-direction: column; align-items: center; margin-top: -15px;">
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
+       
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
       </div>
     `;
-    return L.divIcon({ className: 'traccar-alert-icon', html: html, iconSize: [20, 30], iconAnchor: [10, 25], popupAnchor: [0, -25] });
+    return L.divIcon({
+      className: 'traccar-alert-icon',
+      html: html,
+      iconSize: [20, 30],
+      iconAnchor: [10, 25],
+      popupAnchor: [0, -25]
+    });
   };
 
   const handleRangeChange = (rangeValue) => {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
     const now = new Date(); const start = new Date(now); const end = new Date(now);
-    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1); end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
+    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
+    }
+    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1);
+    end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999); }
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     setReportConfig({ ...reportConfig, from: format(start), to: format(end) });
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     handleRangeChange('today');
-    // eslint-disable-next-line
   }, []);
 
   const handleFetchAlerts = async (e) => {
@@ -59,24 +76,69 @@ export default function Alerts({ devices, token }) {
     
     setIsFetching(true);
     setAlertData([]);
+    setRouteCoords([]); 
 
     try {
       const fromIso = new Date(reportConfig.from).toISOString();
       const toIso = new Date(reportConfig.to).toISOString();
       
+      // Obtenemos las coordenadas para dibujar en el mapa
       const urlRoute = `${BASE_URL}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
       const resRoute = await fetch(urlRoute, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
       const routeData = resRoute.ok ? await resRoute.json() : [];
 
       let foundAlerts = [];
 
+      // === LÓGICA CORREGIDA DE KILOMETRAJE DIARIO ===
+      if (reportConfig.alertType === 'daily_mileage') {
+        // Hacemos la llamada al mismo endpoint que usa tu inforas.txt (/summary) para evitar el "Gps Drift"
+        const urlSummary = `${BASE_URL}/api/reports/summary?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
+        const resSummary = await fetch(urlSummary, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
+        const summaryData = resSummary.ok ? await resSummary.json() : [];
+
+        // Extraemos la distancia oficial y perfecta de Traccar
+        const totalDistance = summaryData.length > 0 ? summaryData[0].distance : 0;
+        const km = (totalDistance / 1000).toFixed(2); // Convertimos a Kilómetros
+        
+        setAlertData([{ 
+          id: 'km-1',
+          type: 'Kilometraje Recorrido', 
+          desc: `Total oficial en el periodo: ${km} km`, 
+          time: new Date(), 
+          lat: routeData.length > 0 ? routeData[0].latitude : null,
+          lon: routeData.length > 0 ? routeData[0].longitude : null,
+          color: '#3B82F6' // Azul
+        }]);
+
+        setRouteCoords(routeData.map(p => [p.latitude, p.longitude]));
+
+        if (routeData.length > 0) {
+          setMapCenter([routeData[0].latitude, routeData[0].longitude]);
+        } else {
+          alert('No hay posiciones registradas para calcular el kilometraje en este rango.');
+        }
+
+        setIsFetching(false);
+        return;
+      }
+
+      // === LÓGICA 1: Exceso de Velocidad ===
       if (reportConfig.alertType === 'overspeed') {
         const limit = parseFloat(reportConfig.speedLimit);
-        foundAlerts = routeData.filter(pos => (pos.speed * 1.852) > limit).map(pos => ({
-          id: pos.id, type: 'Exceso de Velocidad', time: pos.fixTime, lat: pos.latitude, lon: pos.longitude,
-          desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit})`, color: '#EF4444' 
-        }));
-      } else {
+        foundAlerts = routeData
+          .filter(pos => (pos.speed * 1.852) > limit)
+          .map(pos => ({
+            id: pos.id,
+            type: 'Exceso de Velocidad',
+            time: pos.fixTime,
+            lat: pos.latitude,
+            lon: pos.longitude,
+            desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit})`,
+            color: '#EF4444' // Rojo
+          }));
+      } 
+      // === LÓGICA 2: Eventos Nativos de Traccar ===
+      else {
         const urlEvents = `${BASE_URL}/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resEvents = await fetch(urlEvents, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
         const eventsData = resEvents.ok ? await resEvents.json() : [];
@@ -88,7 +150,10 @@ export default function Alerts({ devices, token }) {
         
         foundAlerts = filteredEvents.map(ev => {
           const pos = posMap[ev.positionId] || {}; 
-          let title = 'Evento'; let desc = 'Registrado por el sistema'; let color = '#F59E0B'; 
+          
+          let title = 'Evento';
+          let desc = 'Registrado por el sistema';
+          let color = '#F59E0B'; 
 
           if (ev.type === 'ignitionOn') { title = 'Motor Encendido'; desc = 'El vehículo fue encendido'; color = '#10B981'; } 
           if (ev.type === 'ignitionOff') { title = 'Motor Apagado'; desc = 'El vehículo fue apagado'; color = '#8B5CF6'; } 
@@ -98,7 +163,15 @@ export default function Alerts({ devices, token }) {
           if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } 
           if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } 
 
-          return { id: ev.id, type: title, time: ev.eventTime || ev.serverTime || ev.fixTime, lat: pos.latitude, lon: pos.longitude, desc: desc, color: color };
+          return {
+            id: ev.id,
+            type: title,
+            time: ev.eventTime || ev.serverTime || ev.fixTime,
+            lat: pos.latitude, 
+            lon: pos.longitude,
+            desc: desc,
+            color: color
+          };
         });
       }
       
@@ -108,55 +181,40 @@ export default function Alerts({ devices, token }) {
       if (firstValidAlert) {
         setMapCenter([firstValidAlert.lat, firstValidAlert.lon]);
       } else if (foundAlerts.length > 0) {
-        alert('Se encontraron alertas, pero no reportaron coordenadas exactas. Revise la tabla.');
+        alert('Se encontraron alertas, pero no reportaron coordenadas exactas (ej: desconexiones bruscas). Revise la tabla.');
       } else {
         alert('No se encontraron alertas de este tipo en el rango seleccionado.');
       }
+
     } catch (err) { 
       console.error(err); 
       alert("Error al conectarse con el servidor de Traccar.");
     }
+    
     setIsFetching(false);
   };
 
   return (
-    <main className="alerts-main-container">
-      <style>{`
-        .alerts-main-container { flex: 1; padding: 20px 30px; display: flex; flex-direction: column; overflow-y: auto; }
-        .alerts-form { display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; }
-        .alerts-form-item { flex: 1; min-width: 150px; }
-        .alerts-split-container { display: flex; gap: 20px; margin-top: 20px; flex: 1; min-height: 50vh; }
-        .alerts-map-wrapper { flex: 2; border-radius: 12px; overflow: hidden; border: 1px solid #1F2937; position: relative; }
-        .alerts-table-wrapper { flex: 1; background-color: #111827; padding: 15px; border-radius: 12px; border: 1px solid #1F2937; display: flex; flex-direction: column; }
-        
-        /* MAGIA RESPONSIVA */
-        @media (max-width: 768px) {
-          .alerts-main-container { padding: 15px 10px; }
-          .alerts-form { flex-direction: column; align-items: stretch; }
-          .alerts-form-item { min-width: 100%; }
-          .alerts-split-container { flex-direction: column; }
-          .alerts-map-wrapper { min-height: 400px; flex: none; }
-          .alerts-table-wrapper { flex: none; min-height: 400px; }
-        }
-      `}</style>
-
+    <main style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Centro de Alertas y Eventos</h2>
       
       {/* PANEL DE FILTROS */}
       <div style={styles.adminCard}>
-        <form onSubmit={handleFetchAlerts} className="alerts-form">
-          <div className="alerts-form-item">
+        <form onSubmit={handleFetchAlerts} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
+          
+          <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
             <select required value={reportConfig.deviceId} onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} style={styles.input}>
               <option value="">-- Seleccionar --</option>
-              {devices?.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
 
-          <div className="alerts-form-item">
+          <div style={{flex: 1, minWidth: '180px'}}>
             <label style={styles.label}>Tipo de Alerta:</label>
             <select value={reportConfig.alertType} onChange={e => setReportConfig({...reportConfig, alertType: e.target.value})} style={styles.input}>
               <option value="overspeed">⚡ Exceso de Velocidad</option>
+              <option value="daily_mileage">📏 Kilometraje Diario</option>
               <option value="ignitionOn">🟢 Motor Encendido</option>
               <option value="ignitionOff">🟣 Motor Apagado</option>
               <option value="deviceStopped">🔵 Paradas</option>
@@ -168,13 +226,13 @@ export default function Alerts({ devices, token }) {
           </div>
 
           {reportConfig.alertType === 'overspeed' && (
-            <div style={{width: '100px'}} className="alerts-form-item">
+            <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
             </div>
           )}
 
-          <div className="alerts-form-item">
+          <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Rango de Fecha:</label>
             <select value={quickRange} onChange={e => handleRangeChange(e.target.value)} style={styles.input}>
               <option value="today">Hoy</option>
@@ -186,29 +244,42 @@ export default function Alerts({ devices, token }) {
 
           {quickRange === 'custom' && (
             <>
-              <div className="alerts-form-item"><input type="datetime-local" required value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} /></div>
-              <div className="alerts-form-item"><input type="datetime-local" required value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} /></div>
+              <div style={{flex: 1}}><input type="datetime-local" required value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} /></div>
+              <div style={{flex: 1}}><input type="datetime-local" required value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} /></div>
             </>
           )}
 
-          <button type="submit" disabled={isFetching} style={{...styles.btn, width: '100%'}}>
+          <button type="submit" disabled={isFetching} style={styles.btn}>
             {isFetching ? 'Analizando...' : '🚨 Extraer Alertas'}
           </button>
+
         </form>
       </div>
 
-      {/* CONTENEDOR DIVIDIDO */}
-      <div className="alerts-split-container">
+      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
+      <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
         
         {/* MAPA DE ALERTAS */}
-        <div className="alerts-map-wrapper">
-          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0, position: 'absolute', top: 0, left: 0 }}>
+        <div style={{...styles.mapContainer, flex: 2}}>
+          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />            
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
+            
+            {/* Dibuja la línea de kilometraje si hay coordenadas */}
+            {routeCoords.length > 0 && (
+              <Polyline positions={routeCoords} color="#3B82F6" weight={5} opacity={0.7} />
+            )}
+
             {alertData.map((alert, index) => {
               if (!alert.lat || !alert.lon) return null;
+              
               return (
-                <Marker key={index} position={[alert.lat, alert.lon]} icon={createAlertMarker(alert.type, alert.color)} eventHandlers={{ click: () => setMapCenter([alert.lat, alert.lon]) }}>
+                <Marker 
+                  key={index} 
+                  position={[alert.lat, alert.lon]}
+                  icon={createAlertMarker(alert.type, alert.color)}
+                  eventHandlers={{ click: () => setMapCenter([alert.lat, alert.lon]) }}
+                >
                   <Popup>
                     <b style={{color: alert.color, fontSize: '14px'}}>{alert.type}</b><br/>
                     <span style={{color:'#111827'}}><b>Fecha:</b> {alert.time ? new Date(alert.time).toLocaleString() : 'Fecha no disponible'}</span><br/>
@@ -221,12 +292,14 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        <div className="alerts-table-wrapper">
+        <div style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {alertData.length === 0 ? (
-              <p style={{ color: '#6B7280', fontSize: '13px', textAlign: 'center', marginTop: '40px' }}>No hay alertas para mostrar.</p>
+              <p style={{ color: '#6B7280', fontSize: '13px', textAlign: 'center', marginTop: '40px' }}>
+                No hay alertas para mostrar.
+              </p>
             ) : (
               <table style={styles.table}>
                 <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
@@ -237,7 +310,11 @@ export default function Alerts({ devices, token }) {
                 </thead>
                 <tbody>
                   {alertData.map((alert, index) => (
-                    <tr key={index} style={{ cursor: alert.lat ? 'pointer' : 'default', borderBottom: '1px solid #1F2937', borderLeft: `4px solid ${alert.color}` }} onClick={() => alert.lat && setMapCenter([alert.lat, alert.lon])}>
+                    <tr 
+                      key={index} 
+                      style={{ cursor: alert.lat ? 'pointer' : 'default', transition: 'background 0.2s', borderLeft: `4px solid ${alert.color}` }} 
+                      onClick={() => alert.lat && setMapCenter([alert.lat, alert.lon])}
+                    >
                       <td style={styles.td}>
                         {alert.time ? new Date(alert.time).toLocaleString() : 'Desconocida'}
                         {!alert.lat && <span style={{display: 'block', fontSize: '9px', color: '#EF4444'}}>Sin posición GPS</span>}
@@ -264,11 +341,11 @@ const styles = {
   label: { color:'#9CA3AF', fontSize:'13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', outline: 'none', boxSizing: 'border-box' },
   btn: { backgroundColor: '#3B82F6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
+  mapContainer: { borderRadius: '12px', overflow: 'hidden', border: '1px solid #1F2937' },
+  tableContainer: { backgroundColor: '#111827', padding: '15px', borderRadius: '12px', border: '1px solid #1F2937' },
   tableTitle: { margin: '0 0 10px 0', color: 'white', fontSize: '14px', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: '#9CA3AF' },
   tableHead: { color: 'white', fontSize: '12px' },
   th: { padding: '10px', borderBottom: '1px solid #1F2937' },
-  td: { padding: '10px', fontSize: '12px' }
+  td: { padding: '10px', fontSize: '12px', borderBottom: '1px solid #1F2937' }
 };
-
-//

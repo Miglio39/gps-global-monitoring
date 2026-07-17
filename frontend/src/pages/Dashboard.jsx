@@ -6,10 +6,9 @@ import RoutePlayback from '../components/RoutePlayback';
 import Reports from '../components/Reports';
 import AdminPanel from '../components/AdminPanel';
 import Alerts from '../components/Alerts';
-import WorkRoutesReport from '../components/WorkRoutesReport'; 
+import WorkRoutesReport from '../components/WorkRoutesReport';
 import Geofences from '../components/Geofences';
 import ShareLocation from '../components/ShareLocation';
-
 
 const MenuIcon = ({ path }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -23,7 +22,7 @@ export default function Dashboard() {
   const [devices, setDevices] = useState([]);
   const [positions, setPositions] = useState({});
   const [currentUser, setCurrentUser] = useState(null);
-  
+
   // Estado para controlar si el menú de usuario está visible
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -52,7 +51,7 @@ export default function Dashboard() {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
       if (outcome === 'accepted') {
-        setDeferredPrompt(null); 
+        setDeferredPrompt(null);
       }
     }
   };
@@ -81,10 +80,13 @@ export default function Dashboard() {
           
           setDevices(devs);
           const posMap = {};
+          
           posArray.forEach(p => { posMap[p.deviceId] = p; });
           setPositions(posMap);
         }
-      } catch (error) { console.error("Error conectando con Traccar:", error); }
+      } catch (error) { 
+        console.error("Error conectando con Traccar:", error);
+      }
     };
 
     fetchData();
@@ -138,13 +140,13 @@ export default function Dashboard() {
         .logo-container { margin-bottom: 30px; display: flex; justify-content: center; }
         .nav-menu { flex: 1; display: flex; width: 100%; flex-direction: column; gap: 12px; }
         .user-panel { 
-          display: flex; 
+          display: flex;
           align-items: center; 
           flex-direction: column; 
           padding-top: 15px; 
           border-top: 1px solid #1F2937; 
           width: 100%; 
-          position: relative; 
+          position: relative;
         }
 
         .user-menu-dropdown {
@@ -212,7 +214,7 @@ export default function Dashboard() {
         /* DISEÑO RESPONSIVE (MÓVIL) */
         @media (max-width: 768px) {
           .layout-main {
-            flex-direction: column; 
+            flex-direction: column;
           }
           
           .sidebar {
@@ -224,12 +226,12 @@ export default function Dashboard() {
             flex-direction: row;
             border-right: none;
             border-top: 1px solid #1F2937;
-            padding: 0 15px; 
+            padding: 0 15px;
             justify-content: space-between;
           }
 
           .main-content {
-            height: calc(100dvh - 60px); 
+            height: calc(100dvh - 60px);
             width: 100%;
           }
 
@@ -241,11 +243,11 @@ export default function Dashboard() {
             justify-content: space-around; 
             align-items: center;
             height: 100%;
-            margin-right: 10px; 
+            margin-right: 10px;
           }
 
           .user-panel {
-            flex-shrink: 0; 
+            flex-shrink: 0;
             flex-direction: row;
             justify-content: center;
             width: auto;
@@ -287,9 +289,13 @@ export default function Dashboard() {
                 <div onClick={() => setActiveTab('report')} title="Informes y Analíticas" style={{...styles.navItem, ...(activeTab === 'report' ? styles.navItemActive : {})}}>
                   <MenuIcon path="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /> 
                 </div>
-                <div onClick={() => setActiveTab('workRoutes')} title="Informe Rutas Laborales" style={{...styles.navItem, ...(activeTab === 'workRoutes' ? styles.navItemActive : {})}}>
-                  <MenuIcon path="M2 9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /> 
-                </div>
+                
+                {/* BOTÓN DE RUTAS LABORALES BLINDADO PARA ADMIN */}
+                {currentUser?.administrator && (
+                  <div onClick={() => setActiveTab('workRoutes')} title="Informe Rutas Laborales" style={{...styles.navItem, ...(activeTab === 'workRoutes' ? styles.navItemActive : {})}}>
+                    <MenuIcon path="M2 9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /> 
+                  </div>
+                )}
               </>
             )}
 
@@ -305,7 +311,6 @@ export default function Dashboard() {
               <MenuIcon path="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13" /> 
             </div>
             
-
             {currentUser?.administrator && (
               <div onClick={() => setActiveTab('admin')} title="Panel de Administración" style={{...styles.navItem, ...(activeTab === 'admin' ? styles.navItemActive : {}), color: activeTab === 'admin' ? 'white' : '#F59E0B' }}>
                 <MenuIcon path="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /> 
@@ -378,7 +383,9 @@ export default function Dashboard() {
             {activeTab === 'route' && <RoutePlayback devices={devices} token={token} />}
             
             {activeTab === 'report' && <Reports devices={devices} token={token} />}
-            {activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
+            
+            {/* COMPONENTE DE RUTAS LABORALES BLINDADO PARA ADMIN */}
+            {currentUser?.administrator && activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
             
             {activeTab === 'geofences' && <Geofences />}
             {activeTab === 'alerts' && <Alerts devices={devices} token={token} />} 

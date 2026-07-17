@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
-// Llaves y Caché
+// Llaves y Caché de Geocodificación
 const LOCATION_IQ_KEY = 'pk.e0a46bceeed78c708e78aacfc0b2942c';
 const geoCache = {}; 
 
-// EL DOMINIO DE TU SERVIDOR (LA SOLUCIÓN A LA CONEXIÓN)
+// EL DOMINIO DE TU SERVIDOR
 const BASE_URL = 'https://api.labtesting.online'; 
 
 export default function Reports({ devices, token }) {
-  // Bloquear módulo en celulares
+  // Lógica de Bloqueo para Dispositivos Móviles (Responsive)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   useEffect(() => {
@@ -29,7 +29,7 @@ export default function Reports({ devices, token }) {
   
   const [isFetching, setIsFetching] = useState(false);
 
-  // Traductor de Coordenadas
+  // Traductor Inverso de Coordenadas a Direcciones Reales
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return 'Coordenadas inválidas';
     
@@ -96,6 +96,12 @@ export default function Reports({ devices, token }) {
     return `${hours}h ${minutes}m`;
   };
 
+  // Identificador de fechas absolutas inmune a desfases horarios
+  const getSafeDateKey = (isoString) => {
+    const d = new Date(isoString);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+
   const handleFetchData = async (e) => {
     e.preventDefault();
     setIsFetching(true);
@@ -109,38 +115,39 @@ export default function Reports({ devices, token }) {
 
     try {
       if (reportType === 'daily') {
-        // Peticiones usando BASE_URL
-        const [resSummary, resRoute] = await Promise.all([
-            fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers }),
-            fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers }).catch(() => null)
-        ]);
+        const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
 
         if (resSummary.ok) {
             let summary = await resSummary.json();
-            try {
-                if (resRoute && resRoute.ok) {
-                    const route = await resRoute.json();
+            setSummaryData(summary.map(day => ({ ...day, realMaxSpeed: -1 })));
+            
+            fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
+                .then(res => res.ok ? res.json() : [])
+                .then(route => {
                     const maxSpeeds = {};
                     route.forEach(pos => {
-                        const dateKey = new Date(pos.fixTime).toLocaleDateString();
+                        const dateKey = getSafeDateKey(pos.fixTime);
                         const speedKmh = pos.speed * 1.852;
                         if (!maxSpeeds[dateKey] || speedKmh > maxSpeeds[dateKey]) {
                             maxSpeeds[dateKey] = speedKmh;
                         }
                     });
 
-                    summary = summary.map(day => {
-                        const dateKey = new Date(day.startTime).toLocaleDateString();
+                    setSummaryData(prev => prev.map(day => {
+                        const dateKey = getSafeDateKey(day.startTime);
+                        const calculatedMax = maxSpeeds[dateKey];
+                        const fallbackMax = day.maxSpeed ? day.maxSpeed * 1.852 : 0;
+                        
                         return {
                             ...day,
-                            realMaxSpeed: maxSpeeds[dateKey] || (day.maxSpeed ? day.maxSpeed * 1.852 : 0)
+                            realMaxSpeed: calculatedMax !== undefined ? calculatedMax : fallbackMax
                         };
-                    });
-                }
-            } catch (err) {
-                console.warn("Cruce de datos de ruta fallido", err);
-            }
-            setSummaryData(summary);
+                    }));
+                })
+                .catch(err => {
+                    console.warn("Fallo cálculo velocidad fondo", err);
+                    setSummaryData(prev => prev.map(day => ({ ...day, realMaxSpeed: day.maxSpeed ? day.maxSpeed * 1.852 : 0 })));
+                });
         }
       } 
       else if (reportType === 'route') {
@@ -291,8 +298,177 @@ export default function Reports({ devices, token }) {
     setIsFetching(false);
   };
 
+  // EXPORTADOR EXCEL REESTRUCTURADO (TÍTULOS MAYÚSCULAS DINÁMICOS, NEGRITA Y PLACA)
   const handleDownloadExcel = () => {
-    alert("Para exportar los reportes detallados, sugerimos sombrear y copiar la tabla generada en la pantalla directamente a Excel.");
+    if (isFetching) {
+      return alert("Por favor espera a que termine de cargar el informe para exportarlo.");
+    }
+
+    const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
+    const placaVehiculo = selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS";
+    
+    let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
+
+    // SOLUCIÓN: Título de Tipo de Informe dinámico basado en reportType
+    let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
+    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO CONSOLIDADO";
+    else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
+    else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD";
+    else if (reportType === 'harsh') nombreReporteMayus = "INFORME DE ACELERACIONES Y FRENADAS BRUSCAS";
+    else if (reportType === 'idle') nombreReporteMayus = "INFORME DE TIEMPOS EN RALENTÍ";
+    else if (reportType === 'stops') nombreReporteMayus = "INFORME DE VEHÍCULOS DETENIDOS (PARADAS)";
+
+    // Inyección de la plantilla que fuerza el formateo nativo de las celdas en Excel
+    let htmlTemplate = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/><style>
+        th { background-color: #1F2937; color: #FFFFFF; font-weight: bold; text-align: left; font-family: Arial; font-size: 11pt; padding: 6px; }
+        td { border: 0.5pt solid #D1D5DB; font-family: Arial; font-size: 10pt; padding: 4px; }
+        .meta-title { font-size: 12pt; font-weight: bold; color: #111827; font-family: Arial; }
+      </style></head>
+      <body>
+      <table>
+        <tr><td colspan="6" class="meta-title"><b>TIPO DE INFORME: ${nombreReporteMayus}</b></td></tr>
+        <tr><td colspan="6" class="meta-title"><b>VEHÍCULO / PLACA: ${placaVehiculo}</b></td></tr>
+        <tr><td colspan="6" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
+        <tr></tr>
+    `;
+
+    if (reportType === 'daily') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>DÍA / FECHA</b></th>
+          <th><b>HORA INICIO</b></th>
+          <th><b>HORA FIN</b></th>
+          <th><b>DISTANCIA TOTAL (KM)</b></th>
+          <th><b>HORAS MOTOR</b></th>
+          <th><b>VELOCIDAD MÁX (KM/H)</b></th>
+        </tr>
+      `;
+      summaryData.forEach(day => {
+        const date = new Date(day.startTime).toLocaleDateString();
+        const start = new Date(day.startTime).toLocaleTimeString();
+        const end = new Date(day.endTime).toLocaleTimeString();
+        const distance = (day.distance ? (day.distance / 1000) : 0).toFixed(2).replace('.', ',');
+        const engine = formatDuration(day.engineHours);
+        
+        let speed = "Calculando...";
+        if (day.realMaxSpeed !== -1) {
+            speed = (day.realMaxSpeed !== undefined ? day.realMaxSpeed : (day.maxSpeed ? day.maxSpeed * 1.852 : 0)).toFixed(1).replace('.', ',');
+        }
+
+        htmlTemplate += `
+          <tr>
+            <td>${date}</td>
+            <td>${start}</td>
+            <td>${end}</td>
+            <td>${distance}</td>
+            <td>${engine}</td>
+            <td>${speed}</td>
+          </tr>
+        `;
+      });
+    } 
+    else if (reportType === 'route') {
+      if (routeData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>FECHA Y HORA EXACTA</b></th>
+          <th><b>ESTADO MOTOR</b></th>
+          <th><b>VELOCIDAD (KM/H)</b></th>
+          <th><b>BATERÍA GPS</b></th>
+          <th><b>DIRECCIÓN / COORDENADAS</b></th>
+        </tr>
+      `;
+      routeData.forEach(pos => {
+        const dt = new Date(pos.fixTime).toLocaleString();
+        const ignition = pos.attributes?.ignition ? 'Encendido' : 'Apagado';
+        const speed = (pos.speed * 1.852).toFixed(1).replace('.', ',');
+        const battery = pos.attributes?.batteryLevel ? `${pos.attributes.batteryLevel}%` : 'N/A';
+        const address = pos.address ? pos.address : `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`;
+        
+        htmlTemplate += `
+          <tr>
+            <td>${dt}</td>
+            <td>${ignition}</td>
+            <td>${speed}</td>
+            <td>${battery}</td>
+            <td>${address}</td>
+          </tr>
+        `;
+      });
+    }
+    else if (reportType === 'speed' || reportType === 'harsh') {
+      if (eventsData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>FECHA Y HORA</b></th>
+          <th><b>TIPO DE EVENTO</b></th>
+          <th><b>SEVERIDAD</b></th>
+          <th><b>DETALLE FÍSICO / TELEMETRÍA</b></th>
+        </tr>
+      `;
+      eventsData.forEach(ev => {
+        const dt = new Date(ev.serverTime).toLocaleString();
+        let typeText = ev.type.toUpperCase();
+        let detail = '';
+        
+        if (ev.type === 'overspeed') { typeText = 'EXCESO DE VELOCIDAD'; detail = `${(ev.speed * 1.852).toFixed(1).replace('.', ',')} km/h`; }
+        else if (ev.type === 'harshAcceleration') { typeText = 'ACELERACIÓN BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
+        else if (ev.type === 'harshBraking') { typeText = 'FRENADA BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
+        
+        const severity = (ev.severity || 'ALERTA').toUpperCase();
+        htmlTemplate += `
+          <tr>
+            <td>${dt}</td>
+            <td>${typeText}</td>
+            <td>${severity}</td>
+            <td>${detail}</td>
+          </tr>
+        `;
+      });
+    }
+    else if (reportType === 'stops' || reportType === 'idle') {
+      if (stopsData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>HORA DE INICIO</b></th>
+          <th><b>HORA DE FIN</b></th>
+          <th><b>DURACIÓN TOTAL (PARQUEADO)</b></th>
+          <th><b>HORAS MOTOR (RALENTÍ)</b></th>
+          <th><b>UBICACIÓN TRADUCIDA</b></th>
+        </tr>
+      `;
+      stopsData.forEach(stop => {
+        const start = new Date(stop.startTime).toLocaleString();
+        const end = new Date(stop.endTime).toLocaleString();
+        const duration = formatDuration(stop.duration);
+        const engine = stop.engineHours > 0 ? formatDuration(stop.engineHours) : 'Motor Apagado';
+        const address = stop.address ? stop.address : `${stop.latitude.toFixed(4)}, ${stop.longitude.toFixed(4)}`;
+        
+        htmlTemplate += `
+          <tr>
+            <td>${start}</td>
+            <td>${end}</td>
+            <td>${duration}</td>
+            <td>${engine}</td>
+            <td>${address}</td>
+          </tr>
+        `;
+      });
+    }
+
+    htmlTemplate += `</table></body></html>`;
+
+    const blob = new Blob([htmlTemplate], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (isMobile) {
@@ -373,6 +549,10 @@ export default function Reports({ devices, token }) {
           <button type="submit" disabled={isFetching} style={styles.btn}>
             {isFetching ? 'Analizando...' : 'Analizar Data'}
           </button>
+          
+          <button type="button" onClick={handleDownloadExcel} style={{...styles.btn, backgroundColor: '#10B981'}}>
+             Descargar Excel
+          </button>
         </form>
       </div>
 
@@ -397,8 +577,10 @@ export default function Reports({ devices, token }) {
                 <tbody>
                   {summaryData.length === 0 ? <tr><td colSpan="6" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
                   summaryData.map((day, index) => {
-                    const maxSpeed = day.realMaxSpeed !== undefined ? day.realMaxSpeed : (day.maxSpeed ? day.maxSpeed * 1.852 : 0);
                     const distance = day.distance ? (day.distance / 1000) : 0;
+                    const isCalculating = day.realMaxSpeed === -1;
+                    const maxSpeed = isCalculating ? 0 : (day.realMaxSpeed !== undefined ? day.realMaxSpeed : (day.maxSpeed ? day.maxSpeed * 1.852 : 0));
+                    
                     return (
                       <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
                         <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>
@@ -412,7 +594,9 @@ export default function Reports({ devices, token }) {
                         </td>
                         <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{distance.toFixed(2)} km</td>
                         <td style={{...styles.td, color: '#10B981'}}>{formatDuration(day.engineHours)}</td>
-                        <td style={{...styles.td, color: '#EF4444', fontWeight: 'bold'}}>{maxSpeed.toFixed(1)} km/h</td>
+                        <td style={{...styles.td, color: isCalculating ? '#F59E0B' : '#EF4444', fontWeight: 'bold'}}>
+                          {isCalculating ? 'Calculando...' : `${maxSpeed.toFixed(1)} km/h`}
+                        </td>
                       </tr>
                     )
                   })}
@@ -464,7 +648,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3 & 4. TABLAS: EVENTOS (SIN EMOJIS) */}
+        {/* 3 & 4. TABLAS: EVENTOS */}
         {(reportType === 'speed' || reportType === 'harsh') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones / Alertas ({eventsData.length} eventos)</h3>
