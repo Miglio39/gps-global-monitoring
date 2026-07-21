@@ -52,7 +52,7 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      const response = await fetch('https://api.labtesting.online/api/session', {
+      const response = await fetch('http://157.173.201.188:8082', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/x-www-form-urlencoded' 
