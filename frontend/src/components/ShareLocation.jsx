@@ -8,7 +8,7 @@ export default function ShareLocation({ token, devices }) {
   const [generatedUrl, setGeneratedUrl] = useState('');
 
   const APP_URL = 'https://app.labtesting.online'; // <-- Ajusta a tu dominio frontend
-  const BASE_URL = 'https://api.labtesting.online';
+  const BASE_URL = 'https://api.globalmonitorgps.com';
 
   useEffect(() => {
     fetchSharedLinks();

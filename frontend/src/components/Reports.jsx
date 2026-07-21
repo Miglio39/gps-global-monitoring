@@ -5,7 +5,7 @@ const LOCATION_IQ_KEY = 'pk.e0a46bceeed78c708e78aacfc0b2942c';
 const geoCache = {}; 
 
 // EL DOMINIO DE TU SERVIDOR
-const BASE_URL = 'https://api.labtesting.online'; 
+const BASE_URL = 'https://api.globalmonitorgps.com'; 
 
 export default function Reports({ devices, token }) {
   // Lógica de Bloqueo para Dispositivos Móviles (Responsive)

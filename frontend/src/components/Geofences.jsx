@@ -22,7 +22,7 @@ export default function Geofences() {
   const [center, setCenter] = useState(null);
   const [selectedDevice, setSelectedDevice] = useState('ALL'); 
 
-  const BASE_URL = 'https://api.labtesting.online/api';
+  const BASE_URL = 'https://api.globalmonitorgps.com/api';
   const token = localStorage.getItem('traccar_token');
 
   const getHeaders = () => ({

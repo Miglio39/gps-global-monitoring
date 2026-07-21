@@ -17,7 +17,7 @@ export default function PublicTracking() {
   const [position, setPosition] = useState(null);
   const [status, setStatus] = useState('loading'); // loading, active, expired
 
-  const BASE_URL = 'https://api.labtesting.online';
+  const BASE_URL = 'https://api.globalmonitorgps.com';
 
   useEffect(() => {
     if (!token) { setStatus('expired'); return; }

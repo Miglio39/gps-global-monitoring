@@ -26,7 +26,7 @@ export default function Alerts({ devices, token }) {
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
 
   // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
-  const BASE_URL = 'https://api.labtesting.online';
+  const BASE_URL = 'https://api.globalmonitorgps.com';
 
   // Marcador Dinámico (Cambia de color según el tipo de alerta)
   const createAlertMarker = (title, color) => {

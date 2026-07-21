@@ -13,7 +13,7 @@ export default function UserManagement({ token, devices }) {
   // NUEVO: Estado para el buscador
   const [searchTerm, setSearchTerm] = useState('');
 
-  const BASE_URL = 'https://api.labtesting.online';
+  const BASE_URL = 'https://api.globalmonitorgps.com';
 
   useEffect(() => {
     fetchUsersAndDevices();

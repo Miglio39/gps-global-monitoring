@@ -8,7 +8,7 @@ export default function DeviceManagement({ token, devices }) {
   // NUEVO: Estado para el buscador de dispositivos
   const [searchTerm, setSearchTerm] = useState('');
 
-  const BASE_URL = 'https://api.labtesting.online';
+  const BASE_URL = 'https://api.globalmonitorgps.com';
 
   const handleSaveDevice = async (e) => {
     e.preventDefault();
