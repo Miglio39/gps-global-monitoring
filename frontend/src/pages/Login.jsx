@@ -52,7 +52,8 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      const response = await fetch('https://api.globalmonitorgps.com', {
+      // CORRECCIÓN APLICADA AQUÍ: URL limpia y con su ruta /api/session
+      const response = await fetch('https://api.globalmonitorgps.com/api/session', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/x-www-form-urlencoded' 
