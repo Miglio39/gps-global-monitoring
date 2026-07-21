@@ -52,7 +52,7 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      const response = await fetch('http://https://api.globalmonitorgps.com', {
+      const response = await fetch('https://api.globalmonitorgps.com', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/x-www-form-urlencoded' 

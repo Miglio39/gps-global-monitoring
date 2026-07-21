@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://https://api.globalmonitorgps.com', // <-- Tu nueva IP de Contabo
+        target: 'https://api.globalmonitorgps.com', // <-- Tu nueva IP de Contabo
         changeOrigin: true,
       }
     }
