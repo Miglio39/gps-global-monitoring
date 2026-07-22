@@ -52,7 +52,6 @@ export default function Login() {
     setErrorMsg('');
 
     try {
-      // CORRECCIÓN APLICADA AQUÍ: URL limpia y con su ruta /api/session
       const response = await fetch('https://api.globalmonitorgps.com/api/session', {
         method: 'POST',
         headers: { 
@@ -83,6 +82,7 @@ export default function Login() {
 
   return (
     <div style={styles.container}>
+      {/* MAGIA RESPONSIVE: Clases CSS para adaptar el diseño a móviles */}
       <style>
         {`
           @keyframes floatLogo {
@@ -100,10 +100,38 @@ export default function Login() {
           .animated-card {
             animation: fadeIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
           }
+
+          /* --- REGLAS RESPONSIVE PARA CELULARES --- */
+          @media (max-width: 480px) {
+            .login-card {
+              padding: 30px 20px !important;
+            }
+            .logo-img {
+              width: 120px !important;
+            }
+            .company-title {
+              font-size: 20px !important;
+              letter-spacing: 2px !important;
+            }
+            .tagline-text {
+              font-size: 9px !important;
+            }
+            .form-input {
+              font-size: 14px !important;
+              padding: 10px 12px !important;
+            }
+            .login-btn {
+              padding: 12px !important;
+              font-size: 14px !important;
+            }
+            .footer-text {
+              font-size: 10px !important;
+            }
+          }
         `}
       </style>
 
-      {/* 2. BANNER DE INSTALACIÓN (Flota arriba en el Login) */}
+      {/* BANNER DE INSTALACIÓN (Flota arriba en el Login) */}
       {deferredPrompt && isMobileView && (
         <div style={{ position: 'absolute', top: '15px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', maxWidth: '400px', justifyContent: 'space-between', animation: 'fadeIn 0.5s ease' }}>
           <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
@@ -111,17 +139,18 @@ export default function Login() {
         </div>
       )}
 
-      <div style={styles.loginCard} className="animated-card">
+      {/* SECCIÓN DE LA TARJETA */}
+      <div style={styles.loginCard} className="animated-card login-card">
         
         <div style={styles.header}>
           <img 
             src="/logo.png" 
             alt="Logo Global GPS Monitor" 
-            className="animated-logo"
-            style={{ width: '160px', marginBottom: '10px' }} 
+            className="animated-logo logo-img"
+            style={{ width: '160px', marginBottom: '10px', transition: 'width 0.3s' }} 
           />
-          <h1 style={styles.companyName}>MONITOR</h1>
-          <p style={styles.tagline}>SISTEMA DE MONITOREO GLOBAL</p>
+          <h1 style={styles.companyName} className="company-title">MONITOR</h1>
+          <p style={styles.tagline} className="tagline-text">SISTEMA DE MONITOREO GLOBAL</p>
         </div>
 
         {errorMsg && (
@@ -140,6 +169,7 @@ export default function Login() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               style={styles.input}
+              className="form-input"
             />
           </div>
 
@@ -153,6 +183,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={{...styles.input, width: '100%', paddingRight: '45px', boxSizing: 'border-box'}}
+                className="form-input"
               />
               <button 
                 type="button" 
@@ -169,13 +200,13 @@ export default function Login() {
             </div>
           </div>
 
-          <button type="submit" disabled={loading} style={loading ? {...styles.button, opacity: 0.7} : styles.button}>
+          <button type="submit" disabled={loading} style={loading ? {...styles.button, opacity: 0.7} : styles.button} className="login-btn">
             {loading ? 'AUTENTICANDO...' : 'INICIAR SESIÓN'}
           </button>
         </form>
 
         <div style={styles.footer}>
-          <p>© 2026 Global GPS Monitor. Todos los derechos reservados.</p>
+          <p className="footer-text">© 2026 Global GPS Monitor. Todos los derechos reservados.</p>
         </div>
       </div>
     </div>
@@ -183,16 +214,16 @@ export default function Login() {
 }
 
 const styles = {
-  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px', position: 'relative' },
-  loginCard: { backgroundColor: '#FFFFFF', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '100%', maxWidth: '420px', textAlign: 'center' },
+  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px', position: 'relative', boxSizing: 'border-box' },
+  loginCard: { backgroundColor: '#FFFFFF', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '100%', maxWidth: '420px', textAlign: 'center', boxSizing: 'border-box', transition: 'padding 0.3s' },
   header: { marginBottom: '30px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  companyName: { margin: 0, fontSize: '24px', letterSpacing: '3px', color: '#0B1120', fontWeight: '800' },
-  tagline: { fontSize: '11px', color: '#E61E2A', marginTop: '5px', letterSpacing: '1px', fontWeight: 'bold' },
+  companyName: { margin: 0, fontSize: '24px', letterSpacing: '3px', color: '#0B1120', fontWeight: '800', transition: 'font-size 0.3s' },
+  tagline: { fontSize: '11px', color: '#E61E2A', marginTop: '5px', letterSpacing: '1px', fontWeight: 'bold', transition: 'font-size 0.3s' },
   form: { display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
   label: { fontSize: '14px', fontWeight: '600', color: '#333' },
-  input: { padding: '12px 15px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '16px', outline: 'none', transition: 'border-color 0.3s' },
+  input: { padding: '12px 15px', borderRadius: '8px', border: '1px solid #ddd', fontSize: '16px', outline: 'none', transition: 'all 0.3s', boxSizing: 'border-box' },
   eyeButton: { position: 'absolute', right: '10px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5px' },
-  button: { padding: '14px', backgroundColor: '#E61E2A', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px', transition: 'background-color 0.3s' },
-  footer: { marginTop: '30px', fontSize: '11px', color: '#999' }
+  button: { padding: '14px', backgroundColor: '#E61E2A', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px', transition: 'all 0.3s', boxSizing: 'border-box' },
+  footer: { marginTop: '30px', fontSize: '11px', color: '#999', transition: 'font-size 0.3s' }
 };
