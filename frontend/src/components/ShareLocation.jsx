@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 
 export default function ShareLocation({ token, devices }) {
   const [sharedLinks, setSharedLinks] = useState([]);
-  const [form, setForm] = useState({ deviceId: '', duration: '1h' });
+  const [form, setForm] = useState({ deviceIds: [], duration: '1h' });
   const [isLoading, setIsLoading] = useState(false);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   const [generatedUrl, setGeneratedUrl] = useState('');
 
-  const APP_URL = 'https://app.labtesting.online'; // <-- Ajusta a tu dominio frontend
+  const APP_URL = 'https://app.globalmonitorgps.com'; 
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
   useEffect(() => {
@@ -41,29 +41,52 @@ export default function ShareLocation({ token, devices }) {
     return now.toISOString();
   };
 
+  const handleCheckboxChange = (deviceId) => {
+    setForm(prev => {
+      if (prev.deviceIds.includes(deviceId)) {
+        return { ...prev, deviceIds: prev.deviceIds.filter(id => id !== deviceId) };
+      } else {
+        return { ...prev, deviceIds: [...prev.deviceIds, deviceId] };
+      }
+    });
+  };
+
   const handleGenerateLink = async (e) => {
     e.preventDefault();
+    
+    if (form.deviceIds.length === 0) {
+      setAdminMessage({ text: '⚠️ Debes seleccionar al menos un vehículo.', type: 'error' });
+      return;
+    }
+
     setIsLoading(true);
     setAdminMessage({ text: '', type: '' });
     setGeneratedUrl('');
 
-    const selectedDevice = devices?.find(d => d.id === parseInt(form.deviceId));
-    if (!selectedDevice) return;
+    const selectedDevices = devices?.filter(d => form.deviceIds.includes(d.id)) || [];
+    const deviceNames = selectedDevices.map(d => d.name).join(', ');
 
-    const randomPassword = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const randomPassword = Math.random().toString(36).substring(2, 12);
     const tempEmail = `share_${Date.now()}@temp.com`;
     const expirationTime = calculateExpiration(form.duration);
 
+    const linkTitle = form.deviceIds.length === 1 ? `🔗 Link: ${deviceNames}` : `🔗 Link: Flota (${form.deviceIds.length} Vehículos)`;
+    
+    // TRUCO MAESTRO: Guardamos las credenciales crudas directamente en los atributos
+    // porque Traccar jamás nos devolverá el campo link.password en los GET generales.
+    const secretToken = btoa(`${tempEmail}:${randomPassword}`);
+
     const userPayload = {
-      name: `🔗 Link: ${selectedDevice.name}`,
+      name: linkTitle,
       email: tempEmail,
       password: randomPassword,
       readonly: true,
       expirationTime: expirationTime,
       attributes: { 
         isShareLink: true, 
-        deviceId: selectedDevice.id,
-        deviceName: selectedDevice.name
+        deviceIds: form.deviceIds,
+        deviceName: deviceNames,
+        savedToken: secretToken // <-- Almacenado de forma segura y permanente
       }
     };
 
@@ -74,23 +97,28 @@ export default function ShareLocation({ token, devices }) {
         body: JSON.stringify(userPayload)
       });
 
-      if (!userRes.ok) throw new Error("Error creando enlace");
+      if (!userRes.ok) throw new Error("Error creando enlace temporal");
       const newUser = await userRes.json();
 
-      const permRes = await fetch(`${BASE_URL}/api/permissions`, {
-        method: 'POST',
-        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: newUser.id, deviceId: selectedDevice.id })
-      });
+      const permPromises = form.deviceIds.map(deviceId => 
+        fetch(`${BASE_URL}/api/permissions`, {
+          method: 'POST',
+          headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: newUser.id, deviceId: deviceId })
+        })
+      );
 
-      if (!permRes.ok) throw new Error("Error asignando permisos");
+      const permResults = await Promise.all(permPromises);
+      const allOk = permResults.every(res => res.ok);
 
-      const secretToken = btoa(`${tempEmail}:${randomPassword}`);
+      if (!allOk) throw new Error("Error asignando permisos a los vehículos");
+
       const link = `${APP_URL}/track/${secretToken}`;
       
       setGeneratedUrl(link);
-      setAdminMessage({ text: '✅ Enlace generado exitosamente.', type: 'success' });
+      setAdminMessage({ text: '✅ Enlace múltiple generado exitosamente.', type: 'success' });
       fetchSharedLinks();
+      setForm({ ...form, deviceIds: [] });
 
     } catch (error) {
       console.error(error);
@@ -100,8 +128,7 @@ export default function ShareLocation({ token, devices }) {
   };
 
   const handleRevokeLink = async (userId) => {
-    if (!window.confirm("🚨 ¿Deseas revocar este enlace? El tercero perderá el acceso inmediatamente.")) return;
-    
+    if (!window.confirm("🚨 ¿Deseas revocar este enlace? El cliente o tercero perderá el acceso inmediatamente.")) return;
     try {
       const res = await fetch(`${BASE_URL}/api/users/${userId}`, { 
         method: 'DELETE', 
@@ -124,48 +151,19 @@ export default function ShareLocation({ token, devices }) {
   return (
     <div className="share-main-container">
       <style>{`
-        /* ESTILOS FLUIDOS Y RESPONSIVOS */
-        .share-main-container { 
-          padding: 20px 30px; 
-          overflow-y: auto; 
-          flex: 1; 
-          width: 100%; 
-          box-sizing: border-box; 
-        }
-        .share-flex { 
-          display: flex; 
-          gap: 20px; 
-          align-items: flex-start; 
-        }
-        .share-card-left { 
-          flex: 1; 
-          min-width: 280px; 
-        }
-        .share-card-right { 
-          flex: 2; 
-          min-width: 0; /* Clave para que Flexbox no se desborde con tablas largas */
-        }
-        .table-responsive-wrapper {
-          width: 100%;
-          overflow-x: auto;
-          -webkit-overflow-scrolling: touch; /* Suavidad en iOS */
-        }
-        
-        /* ADAPTACIÓN A MÓVILES */
+        .share-main-container { padding: 20px 30px; overflow-y: auto; flex: 1; width: 100%; box-sizing: border-box; }
+        .share-flex { display: flex; gap: 20px; align-items: flex-start; }
+        .share-card-left { flex: 1; min-width: 280px; }
+        .share-card-right { flex: 2; min-width: 0; }
+        .table-responsive-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .checkbox-list::-webkit-scrollbar { width: 6px; }
+        .checkbox-list::-webkit-scrollbar-track { background: #111827; border-radius: 4px; }
+        .checkbox-list::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
         @media (max-width: 768px) {
-          .share-main-container { 
-            padding: 15px 15px 90px 15px; /* 90px abajo para librar el menú móvil inferior */
-          }
-          .share-flex { 
-            flex-direction: column; 
-          }
-          .share-card-left, .share-card-right { 
-            width: 100%; 
-            flex: none; 
-          }
-          .share-card-right {
-            padding: 15px !important;
-          }
+          .share-main-container { padding: 15px 15px 90px 15px; }
+          .share-flex { flex-direction: column; }
+          .share-card-left, .share-card-right { width: 100%; flex: none; }
+          .share-card-right { padding: 15px !important; }
         }
       `}</style>
 
@@ -178,21 +176,24 @@ export default function ShareLocation({ token, devices }) {
       )}
 
       <div className="share-flex">
-        
-        {/* PANEL IZQUIERDO: GENERADOR */}
         <div style={styles.adminCard} className="share-card-left">
           <h3 style={styles.adminCardTitle}>🌐 Nuevo Enlace</h3>
-          <p style={{ color: '#9CA3AF', fontSize: '12px', marginBottom: '15px' }}>
-            Genera un link seguro que caduca automáticamente. Ideal para clientes o terceros.
-          </p>
-
           <form onSubmit={handleGenerateLink} style={styles.form}>
             <div>
-              <label style={styles.label}>Vehículo a compartir:</label>
-              <select required value={form.deviceId} onChange={e => setForm({...form, deviceId: e.target.value})} style={styles.input}>
-                <option value="">-- Seleccionar GPS --</option>
-                {devices?.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
+              <label style={styles.label}>Vehículo(s) a compartir:</label>
+              <div className="checkbox-list" style={{ maxHeight: '180px', overflowY: 'auto', backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px' }}>
+                {devices?.map(d => (
+                  <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'white', marginBottom: '10px', cursor: 'pointer', fontSize: '14px' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={form.deviceIds.includes(d.id)}
+                      onChange={() => handleCheckboxChange(d.id)}
+                      style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#10B981' }}
+                    />
+                    {d.name}
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -222,15 +223,13 @@ export default function ShareLocation({ token, devices }) {
           )}
         </div>
 
-        {/* PANEL DERECHO: ENLACES ACTIVOS */}
         <div style={styles.adminCard} className="share-card-right">
           <h3 style={styles.adminCardTitle}>📡 Enlaces Activos ({sharedLinks.length})</h3>
-          
           <div className="table-responsive-wrapper">
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>Vehículo</th>
+                  <th style={styles.th}>Vehículos Incluidos</th>
                   <th style={styles.th}>Caduca en</th>
                   <th style={styles.th}>Enlace</th>
                   <th style={styles.th}>Acción</th>
@@ -244,22 +243,18 @@ export default function ShareLocation({ token, devices }) {
                     const isExpired = new Date(link.expirationTime) < new Date();
                     return (
                       <tr key={link.id} style={{ ...styles.tr, opacity: isExpired ? 0.5 : 1 }}>
-                        <td style={styles.td}>
-                          <strong style={{ color: '#60A5FA' }}>{link.attributes?.deviceName || 'GPS'}</strong>
+                        <td style={{...styles.td, maxWidth: '200px', whiteSpace: 'normal'}}>
+                          <strong style={{ color: '#60A5FA' }}>{link.attributes?.deviceName || 'Vehículos'}</strong>
                         </td>
                         <td style={styles.td}>
-                          {new Date(link.expirationTime).toLocaleString()}<br/>
-                          {isExpired ? (
-                            <span style={{ color: '#EF4444', fontSize: '11px', fontWeight: 'bold' }}>VENCIDO</span>
-                          ) : (
-                            <span style={{ color: '#10B981', fontSize: '11px', fontWeight: 'bold' }}>ACTIVO</span>
-                          )}
+                          {new Date(link.expirationTime).toLocaleString()}
                         </td>
                         <td style={styles.td}>
                           <button 
                             onClick={() => {
-                              const creds = btoa(`${link.email}:${link.attributes?.token}`);
-                              copyToClipboard(`${APP_URL}/track/${creds}`);
+                              // ENLACE CORREGIDO: Extrae el token guardado idéntico al de arriba
+                              const activeToken = link.attributes?.savedToken || '';
+                              copyToClipboard(`${APP_URL}/track/${activeToken}`);
                             }} 
                             style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#F3F4F6', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', whiteSpace: 'nowrap' }}
                           >
@@ -267,10 +262,7 @@ export default function ShareLocation({ token, devices }) {
                           </button>
                         </td>
                         <td style={styles.td}>
-                          <button 
-                            onClick={() => handleRevokeLink(link.id)} 
-                            style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                          >
+                          <button onClick={() => handleRevokeLink(link.id)} style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                             Revocar ✕
                           </button>
                         </td>
@@ -282,7 +274,6 @@ export default function ShareLocation({ token, devices }) {
             </table>
           </div>
         </div>
-
       </div>
     </div>
   );
