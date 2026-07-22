@@ -1,26 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// Componente inteligente para forzar el encuadre (Bounds) de múltiples vehículos
+// 1. CORRECCIÓN DE UX: Centrado Inteligente (Solo al inicio o al hacer clic en "Ver Todos")
 function AutoBounds({ positions, forceUpdate }) {
   const map = useMap();
+  const initialCentered = useRef(false);
+  const prevForceUpdate = useRef(forceUpdate);
+
   useEffect(() => {
-    if (positions && positions.length > 0) {
+    if (!positions || positions.length === 0) return;
+
+    // ¿Debe centrarse? SÍ, si es la primera vez que carga la pantalla, o si el usuario apretó un botón para re-centrar.
+    const shouldCenter = !initialCentered.current || prevForceUpdate.current !== forceUpdate;
+
+    if (shouldCenter) {
       if (positions.length === 1) {
         map.setView([positions[0].latitude, positions[0].longitude], 15);
       } else {
         const bounds = L.latLngBounds(positions.map(p => [p.latitude, p.longitude]));
         map.fitBounds(bounds, { padding: [50, 50] });
       }
+      initialCentered.current = true;
+      prevForceUpdate.current = forceUpdate;
     }
   }, [positions, forceUpdate, map]);
   return null;
 }
 
-// Para hacer FlyTo al hacer clic en la lista
+// Para hacer FlyTo cuando seleccionas en la lista sin bloquear el mapa luego
 function FlyToLocation({ targetPos }) {
   const map = useMap();
   useEffect(() => {
@@ -36,10 +46,9 @@ export default function PublicTracking() {
   const [devices, setDevices] = useState([]); 
   const [positions, setPositions] = useState([]); 
   const [status, setStatus] = useState('loading'); 
-  const [mapTarget, setMapTarget] = useState(null); // Posición objetivo para FlyTo
-  const [forceBounds, setForceBounds] = useState(0); // Para el botón "Ver Todos"
+  const [mapTarget, setMapTarget] = useState(null); 
+  const [forceBounds, setForceBounds] = useState(0); 
   
-  // Lógica Responsive para la lista
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [isListOpen, setIsListOpen] = useState(window.innerWidth >= 768);
 
@@ -95,7 +104,6 @@ export default function PublicTracking() {
     return () => clearInterval(interval);
   }, [token]);
 
-  // Ícono personalizado: Verde si avanza, Rojo si está quieto
   const createMovingIcon = (speed) => new L.DivIcon({
     html: `<div style="background-color: ${speed > 0 ? '#10B981' : '#EF4444'}; border: 3px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 0 10px ${speed > 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'};"></div>`,
     className: 'custom-moving-icon',
@@ -122,18 +130,27 @@ export default function PublicTracking() {
   const movingCount = positions.filter(p => p.speed > 0).length;
   const stoppedCount = positions.length - movingCount;
 
-  // Lógica para clic en la lista
   const handleDeviceClick = (pos) => {
     if (pos) {
-      setMapTarget(pos);
-      if (isMobile) setIsListOpen(false); // Cierra lista en móvil al seleccionar
+      setMapTarget(null); // Resetea estado para forzar el re-render
+      setTimeout(() => setMapTarget(pos), 10);
+      if (isMobile) setIsListOpen(false);
     }
   };
 
   const handleShowAll = () => {
     setMapTarget(null);
-    setForceBounds(prev => prev + 1); // Dispara AutoBounds
+    setForceBounds(prev => prev + 1); 
   };
+
+  // Variables para la tarjeta inferior si es 1 solo dispositivo
+  let singleSpeed = 0;
+  let singleIgnition = false;
+  if (devices.length === 1 && positions.length > 0) {
+    singleSpeed = positions[0].speed;
+    // 2. CORRECCIÓN LÓGICA DE IGNICIÓN: Si tiene velocidad, está encendido
+    singleIgnition = singleSpeed > 0 ? true : (positions[0].attributes?.ignition || false);
+  }
 
   return (
     <div style={{ height: '100vh', width: '100vw', position: 'relative', overflow: 'hidden' }}>
@@ -159,17 +176,20 @@ export default function PublicTracking() {
         <FlyToLocation targetPos={mapTarget} />
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap" />
         
-        {/* ITERACIÓN MÚLTIPLE CORRECTA */}
         {positions.map(pos => {
           const device = devices.find(d => d.id === pos.deviceId);
-          if (!device) return null; // Previene error si hay asimetría de datos
+          if (!device) return null; 
+
+          // 2. CORRECCIÓN LÓGICA DE IGNICIÓN PARA EL POPUP
+          const isMoving = pos.speed > 0;
+          const ignition = isMoving ? true : (pos.attributes?.ignition || false);
           
           return (
             <Marker key={pos.id} position={[pos.latitude, pos.longitude]} icon={createMovingIcon(pos.speed)}>
               <Popup>
                 <b style={{color: 'black', fontSize:'14px'}}>{device.name}</b><br/>
                 <span>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
-                <span>Ignición: {pos.attributes?.ignition ? 'Encendido 🟢' : 'Apagado 🔴'}</span>
+                <span>Ignición: {ignition ? 'Encendido 🟢' : 'Apagado 🔴'}</span>
               </Popup>
             </Marker>
           );
@@ -178,31 +198,18 @@ export default function PublicTracking() {
 
       {/* PANEL FLOTANTE DESPLEGABLE (LISTA DE VEHÍCULOS) */}
       <div style={{ 
-        position: 'absolute', 
-        top: 15, 
-        right: 15, 
-        bottom: isListOpen ? 15 : 'auto', 
+        position: 'absolute', top: 15, right: 15, bottom: isListOpen ? 15 : 'auto', 
         width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '320px') : '44px', 
-        height: isListOpen ? 'auto' : '44px',
-        maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
-        backgroundColor: 'rgba(15, 23, 42, 0.85)', 
-        backdropFilter: 'blur(16px)', 
-        borderRadius: '14px', 
-        border: '1px solid rgba(255,255,255,0.08)', 
-        zIndex: 1000, 
-        display: 'flex', 
-        flexDirection: 'column', 
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-        overflow: 'hidden' 
+        height: isListOpen ? 'auto' : '44px', maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
+        backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', 
+        borderRadius: '14px', border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, 
+        display: 'flex', flexDirection: 'column', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' 
       }}>
         <div style={{ 
-          padding: isListOpen ? '14px 16px' : '0', 
-          height: isListOpen ? 'auto' : '100%',
+          padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%',
           borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', 
-          display: 'flex', 
-          justifyContent: isListOpen ? 'space-between' : 'center', 
-          alignItems: 'center' 
+          display: 'flex', justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' 
         }}>
           {isListOpen && (
             <div>
@@ -213,11 +220,10 @@ export default function PublicTracking() {
             </div>
           )}
           <button onClick={() => setIsListOpen(!isListOpen)} style={{ 
-            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', 
-            border: 'none', color: '#9CA3AF', cursor: 'pointer', 
-            fontSize: isListOpen ? '14px' : '18px', width: isListOpen ? '28px' : '100%', 
-            height: isListOpen ? '28px' : '100%', borderRadius: '8px', 
-            display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' 
+            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', 
+            color: '#9CA3AF', cursor: 'pointer', fontSize: isListOpen ? '14px' : '18px', 
+            width: isListOpen ? '28px' : '100%', height: isListOpen ? '28px' : '100%', 
+            borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' 
           }}>
             {isListOpen ? '✕' : '🚚'}
           </button>
@@ -226,13 +232,12 @@ export default function PublicTracking() {
         {isListOpen && (
           <div style={{ overflowY: 'auto', flex: 1, padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {devices.map(device => {
-              // Buscar la posición EXACTA de este deviceId
               const pos = positions.find(p => p.deviceId === device.id);
               if (!pos) return null;
 
+              // 2. CORRECCIÓN LÓGICA DE IGNICIÓN PARA LA LISTA
               const isMoving = pos.speed > 0;
-              const ignition = pos.attributes?.ignition;
-              const hasIgnition = ignition !== undefined && ignition !== null;
+              const ignition = isMoving ? true : (pos.attributes?.ignition || false);
               const isSelected = mapTarget?.deviceId === device.id;
 
               return (
@@ -254,13 +259,11 @@ export default function PublicTracking() {
                         {device.name}
                       </strong>
                       
-                      {hasIgnition && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: ignition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${ignition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }}>
-                          <span style={{ fontSize: '9px', color: ignition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
-                            {ignition ? 'ON' : 'OFF'}
-                          </span>
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: ignition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${ignition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }}>
+                        <span style={{ fontSize: '9px', color: ignition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
+                          {ignition ? 'ON' : 'OFF'}
+                        </span>
+                      </div>
                     </div>
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
@@ -276,6 +279,32 @@ export default function PublicTracking() {
         )}
       </div>
 
+      {/* TARJETA FLOTANTE INFERIOR (Estilo Uber) */}
+      <div style={{
+        position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
+        backgroundColor: 'rgba(17, 24, 39, 0.9)', backdropFilter: 'blur(10px)',
+        padding: '15px 25px', borderRadius: '15px', border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 10px 25px rgba(0,0,0,0.5)', zIndex: 1000, width: '90%', maxWidth: '350px',
+        display: 'flex', alignItems: 'center', gap: '15px'
+      }}>
+        <div style={{ width: '40px', height: '40px', backgroundColor: '#2563EB', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px' }}>
+          🚙
+        </div>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>
+            {devices.length === 1 ? devices[0].name : `Flota Compartida (${devices.length})`}
+          </h3>
+          {devices.length === 1 ? (
+            <p style={{ margin: 0, color: singleSpeed > 0 ? '#10B981' : '#EF4444', fontSize: '13px', fontWeight: 'bold' }}>
+              {(singleSpeed * 1.852).toFixed(0)} km/h • {singleIgnition ? 'Encendido' : 'Apagado'}
+            </p>
+          ) : (
+            <p style={{ margin: 0, color: '#9CA3AF', fontSize: '13px', fontWeight: 'bold' }}>
+              <span style={{ color: '#10B981' }}>{movingCount} En Ruta</span> • <span style={{ color: '#EF4444' }}>{stoppedCount} Detenidos</span>
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
