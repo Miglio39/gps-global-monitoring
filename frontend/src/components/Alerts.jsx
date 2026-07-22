@@ -193,7 +193,9 @@ export default function Alerts({ devices, token }) {
   };
 
   return (
-    <main className="alerts-main" style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
+    // CAMBIO CLAVE 1: Ajustamos el contenedor principal para que ocupe exactamente la altura de la ventana
+    // y maneje su propio scroll interno sin empujar el layout de la app
+    <main className="alerts-main" style={{display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', padding: '20px 30px', boxSizing: 'border-box'}}>
       
       {/* MAGIA RESPONSIVE: Inyectamos los media queries para adaptar la pantalla en móviles */}
       <style>
@@ -201,6 +203,8 @@ export default function Alerts({ devices, token }) {
           @media (max-width: 768px) {
             .alerts-main {
               padding: 15px 10px !important;
+              /* Aseguramos que en móvil el contenedor deje espacio para barras de navegación si las hay */
+              height: calc(100vh - 60px) !important; 
             }
             .filter-container {
               flex-direction: column !important;
@@ -212,16 +216,20 @@ export default function Alerts({ devices, token }) {
             }
             .alerts-content-wrapper {
               flex-direction: column !important;
+              /* En móviles permitimos que el contenedor haga scroll si el contenido es muy alto */
+              overflow-y: auto !important;
+              flex: 1 !important;
             }
             .alerts-map-box {
               flex: none !important;
               width: 100% !important;
+              height: 350px !important;
               min-height: 350px !important;
             }
             .alerts-table-box {
-              flex: none !important;
+              flex: 1 !important; /* La tabla debe tomar el resto del espacio disponible */
               width: 100% !important;
-              max-height: 400px !important;
+              min-height: 250px !important; /* Aseguramos un mínimo para la tabla */
             }
             .btn-submit {
               width: 100% !important;
@@ -231,10 +239,10 @@ export default function Alerts({ devices, token }) {
         `}
       </style>
 
-      <h2 style={{color:'white', margin:'0 0 20px 0'}}>Centro de Alertas y Eventos</h2>
+      <h2 style={{color:'white', margin:'0 0 20px 0', flexShrink: 0}}>Centro de Alertas y Eventos</h2>
       
       {/* PANEL DE FILTROS */}
-      <div style={styles.adminCard}>
+      <div style={{...styles.adminCard, flexShrink: 0}}>
         <form onSubmit={handleFetchAlerts} className="filter-container" style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
           <div className="filter-item" style={{flex: 1, minWidth: '150px'}}>
@@ -292,11 +300,12 @@ export default function Alerts({ devices, token }) {
       </div>
 
       {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
-      <div className="alerts-content-wrapper" style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
+      {/* CAMBIO CLAVE 2: Aseguramos que este contenedor tome el espacio restante sin desbordar */}
+      <div className="alerts-content-wrapper" style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, overflow: 'hidden' }}>
         
         {/* MAPA DE ALERTAS */}
         <div className="alerts-map-box" style={{...styles.mapContainer, flex: 2, position: 'relative'}}>
-          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', minHeight: '300px', zIndex: 0 }}>
+          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
             
@@ -327,7 +336,8 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        <div className="alerts-table-box" style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
+        {/* CAMBIO CLAVE 3: Aseguramos que la tabla pueda hacer scroll internamente */}
+        <div className="alerts-table-box" style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
           <div style={{ overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
@@ -378,7 +388,7 @@ const styles = {
   btn: { backgroundColor: '#3B82F6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
   mapContainer: { borderRadius: '12px', overflow: 'hidden', border: '1px solid #1F2937', display: 'flex', flexDirection: 'column' },
   tableContainer: { backgroundColor: '#111827', padding: '15px', borderRadius: '12px', border: '1px solid #1F2937' },
-  tableTitle: { margin: '0 0 10px 0', color: 'white', fontSize: '14px', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
+  tableTitle: { margin: '0 0 10px 0', color: 'white', fontSize: '14px', borderBottom: '1px solid #1F2937', paddingBottom: '10px', flexShrink: 0 },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: '#9CA3AF' },
   tableHead: { color: 'white', fontSize: '12px' },
   th: { padding: '10px', borderBottom: '1px solid #1F2937' },
