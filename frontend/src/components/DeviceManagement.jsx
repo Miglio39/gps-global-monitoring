@@ -1,22 +1,29 @@
 import React, { useState } from 'react';
 
 export default function DeviceManagement({ token, devices }) {
-  const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '' });
+  const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   
-  // NUEVO: Estado para el buscador de dispositivos
+  // Estado para el buscador de dispositivos
   const [searchTerm, setSearchTerm] = useState('');
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
   const handleSaveDevice = async (e) => {
     e.preventDefault();
+    
+    // Inyectamos la fecha actual. Si es nuevo, toma hoy. Si estamos editando, conserva la que ya tenía.
+    const fechaActual = new Date().toISOString();
+
     const payload = {
         name: deviceForm.placa,
         uniqueId: deviceForm.imei,
         phone: deviceForm.sim,
-        attributes: { puerto: parseInt(deviceForm.puerto) } 
+        attributes: { 
+          puerto: parseInt(deviceForm.puerto),
+          fechaRegistro: deviceForm.fechaRegistro || fechaActual
+        } 
     };
 
     if (editingDeviceId) {
@@ -28,7 +35,7 @@ export default function DeviceManagement({ token, devices }) {
         });
         if (res.ok) { 
             setAdminMessage({ text: 'GPS Actualizado exitosamente.', type: 'success' });
-            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' }); 
+            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' }); 
             setEditingDeviceId(null);
         }
     } else {
@@ -39,7 +46,7 @@ export default function DeviceManagement({ token, devices }) {
         });
         if (res.ok) { 
             setAdminMessage({ text: 'GPS registrado exitosamente.', type: 'success' });
-            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' });
+            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
         } else {
             setAdminMessage({ text: 'Error: El IMEI ya está registrado.', type: 'error' });
         }
@@ -51,7 +58,8 @@ export default function DeviceManagement({ token, devices }) {
           placa: device.name, 
           imei: device.uniqueId,
           sim: device.phone || '',
-          puerto: device.attributes?.puerto || ''
+          puerto: device.attributes?.puerto || '',
+          fechaRegistro: device.attributes?.fechaRegistro || ''
       });
       setEditingDeviceId(device.id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -63,13 +71,13 @@ export default function DeviceManagement({ token, devices }) {
       if (res.ok) { 
           setAdminMessage({ text: 'GPS eliminado correctamente.', type: 'success' });
           if (editingDeviceId === id) {
-              setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' });
+              setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
               setEditingDeviceId(null);
           }
       }
   };
 
-  // NUEVO: Lógica de Filtrado (Buscador)
+  // Lógica de Filtrado (Buscador)
   const filteredDevices = devices.filter(d => {
     const term = searchTerm.toLowerCase();
     return (
@@ -130,7 +138,7 @@ export default function DeviceManagement({ token, devices }) {
                   {editingDeviceId ? 'Guardar Cambios' : 'Registrar Equipo'}
               </button>
               {editingDeviceId && (
-                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '' })}} style={{...styles.btn, backgroundColor:'#374151', flex: 1, maxWidth: '150px'}}>Cancelar</button>
+                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' })}} style={{...styles.btn, backgroundColor:'#374151', flex: 1, maxWidth: '150px'}}>Cancelar</button>
               )}
           </div>
         </form>
@@ -139,7 +147,7 @@ export default function DeviceManagement({ token, devices }) {
       {/* TABLA DE DISPOSITIVOS */}
       <div style={{...styles.adminCard, marginTop: '20px'}} className="dev-card-container">
         
-        {/* NUEVO: Contenedor del Buscador */}
+        {/* Contenedor del Buscador */}
         <div className="search-container">
           <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
             Hardware Registrado ({filteredDevices.length})
@@ -162,13 +170,14 @@ export default function DeviceManagement({ token, devices }) {
                         <th style={styles.th}>IMEI</th>
                         <th style={styles.th}>Número SIM</th>
                         <th style={styles.th}>Puerto / Marca</th>
+                        <th style={styles.th}>Fecha Registro</th>
                         <th style={styles.th}>Última Conexión</th>
                         <th style={styles.th}>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
                     {filteredDevices.length === 0 ? (
-                      <tr><td colSpan="6" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
+                      <tr><td colSpan="7" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
                     ) : (
                       filteredDevices.map(d => {
                           const p = d.attributes?.puerto;
@@ -180,12 +189,16 @@ export default function DeviceManagement({ token, devices }) {
                           if (p === 5027) marcaTexto = 'Teltonika (5027)';
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
+                          // Formateo de la nueva fecha inyectada
+                          const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
+
                           return (
                               <tr key={d.id} style={styles.tr}>
                                   <td style={styles.td}><strong>{d.name}</strong></td>
                                   <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
                                   <td style={styles.td}>{d.phone || 'N/A'}</td>
                                   <td style={styles.td}>{marcaTexto}</td>
+                                  <td style={{...styles.td, color: '#60A5FA', fontSize: '12px'}}>{fechaReg}</td>
                                   <td style={styles.td}>{d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca'}</td>
                                   <td style={styles.td}>
                                       <button onClick={() => handleEditClick(d)} style={styles.actionBtnEdit}>✏️</button>
@@ -209,7 +222,7 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: '10px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '800px' },
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '900px' },
   th: { padding: '12px 15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '13px', color: '#9CA3AF', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #1F2937' },
   td: { padding: '12px 15px', fontSize: '14px', whiteSpace: 'nowrap' },
