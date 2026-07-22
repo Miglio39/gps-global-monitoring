@@ -89,16 +89,14 @@ export default function Alerts({ devices, token }) {
 
       let foundAlerts = [];
 
-      // === LÓGICA CORREGIDA DE KILOMETRAJE DIARIO ===
+      // === LÓGICA DE KILOMETRAJE DIARIO ===
       if (reportConfig.alertType === 'daily_mileage') {
-        // Hacemos la llamada al mismo endpoint que usa tu inforas.txt (/summary) para evitar el "Gps Drift"
         const urlSummary = `${BASE_URL}/api/reports/summary?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resSummary = await fetch(urlSummary, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
         const summaryData = resSummary.ok ? await resSummary.json() : [];
 
-        // Extraemos la distancia oficial y perfecta de Traccar
         const totalDistance = summaryData.length > 0 ? summaryData[0].distance : 0;
-        const km = (totalDistance / 1000).toFixed(2); // Convertimos a Kilómetros
+        const km = (totalDistance / 1000).toFixed(2); 
         
         setAlertData([{ 
           id: 'km-1',
@@ -195,14 +193,51 @@ export default function Alerts({ devices, token }) {
   };
 
   return (
-    <main style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
+    <main className="alerts-main" style={{flex: 1, padding: '20px 30px', display: 'flex', flexDirection: 'column', overflowY: 'auto'}}>
+      
+      {/* MAGIA RESPONSIVE: Inyectamos los media queries para adaptar la pantalla en móviles */}
+      <style>
+        {`
+          @media (max-width: 768px) {
+            .alerts-main {
+              padding: 15px 10px !important;
+            }
+            .filter-container {
+              flex-direction: column !important;
+              align-items: stretch !important;
+            }
+            .filter-item {
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .alerts-content-wrapper {
+              flex-direction: column !important;
+            }
+            .alerts-map-box {
+              flex: none !important;
+              width: 100% !important;
+              min-height: 350px !important;
+            }
+            .alerts-table-box {
+              flex: none !important;
+              width: 100% !important;
+              max-height: 400px !important;
+            }
+            .btn-submit {
+              width: 100% !important;
+              margin-top: 10px !important;
+            }
+          }
+        `}
+      </style>
+
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Centro de Alertas y Eventos</h2>
       
       {/* PANEL DE FILTROS */}
       <div style={styles.adminCard}>
-        <form onSubmit={handleFetchAlerts} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
+        <form onSubmit={handleFetchAlerts} className="filter-container" style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
-          <div style={{flex: 1, minWidth: '150px'}}>
+          <div className="filter-item" style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
             <select required value={reportConfig.deviceId} onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} style={styles.input}>
               <option value="">-- Seleccionar --</option>
@@ -210,7 +245,7 @@ export default function Alerts({ devices, token }) {
             </select>
           </div>
 
-          <div style={{flex: 1, minWidth: '180px'}}>
+          <div className="filter-item" style={{flex: 1, minWidth: '180px'}}>
             <label style={styles.label}>Tipo de Alerta:</label>
             <select value={reportConfig.alertType} onChange={e => setReportConfig({...reportConfig, alertType: e.target.value})} style={styles.input}>
               <option value="overspeed">⚡ Exceso de Velocidad</option>
@@ -226,13 +261,13 @@ export default function Alerts({ devices, token }) {
           </div>
 
           {reportConfig.alertType === 'overspeed' && (
-            <div style={{width: '100px'}}>
+            <div className="filter-item" style={{width: '100px', minWidth: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
             </div>
           )}
 
-          <div style={{flex: 1, minWidth: '150px'}}>
+          <div className="filter-item" style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Rango de Fecha:</label>
             <select value={quickRange} onChange={e => handleRangeChange(e.target.value)} style={styles.input}>
               <option value="today">Hoy</option>
@@ -244,12 +279,12 @@ export default function Alerts({ devices, token }) {
 
           {quickRange === 'custom' && (
             <>
-              <div style={{flex: 1}}><input type="datetime-local" required value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} /></div>
-              <div style={{flex: 1}}><input type="datetime-local" required value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} /></div>
+              <div className="filter-item" style={{flex: 1}}><input type="datetime-local" required value={reportConfig.from} onChange={e => setReportConfig({...reportConfig, from: e.target.value})} style={styles.input} /></div>
+              <div className="filter-item" style={{flex: 1}}><input type="datetime-local" required value={reportConfig.to} onChange={e => setReportConfig({...reportConfig, to: e.target.value})} style={styles.input} /></div>
             </>
           )}
 
-          <button type="submit" disabled={isFetching} style={styles.btn}>
+          <button type="submit" disabled={isFetching} className="filter-item btn-submit" style={styles.btn}>
             {isFetching ? 'Analizando...' : '🚨 Extraer Alertas'}
           </button>
 
@@ -257,11 +292,11 @@ export default function Alerts({ devices, token }) {
       </div>
 
       {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
-      <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
+      <div className="alerts-content-wrapper" style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, minHeight: '50vh' }}>
         
         {/* MAPA DE ALERTAS */}
-        <div style={{...styles.mapContainer, flex: 2}}>
-          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
+        <div className="alerts-map-box" style={{...styles.mapContainer, flex: 2, position: 'relative'}}>
+          <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', minHeight: '300px', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
             
@@ -292,10 +327,10 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        <div style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
+        <div className="alerts-table-box" style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
-          <div style={{ overflowY: 'auto', flex: 1 }}>
+          <div style={{ overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
             {alertData.length === 0 ? (
               <p style={{ color: '#6B7280', fontSize: '13px', textAlign: 'center', marginTop: '40px' }}>
                 No hay alertas para mostrar.
@@ -341,7 +376,7 @@ const styles = {
   label: { color:'#9CA3AF', fontSize:'13px', fontWeight: 'bold', display: 'block', marginBottom: '5px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', outline: 'none', boxSizing: 'border-box' },
   btn: { backgroundColor: '#3B82F6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
-  mapContainer: { borderRadius: '12px', overflow: 'hidden', border: '1px solid #1F2937' },
+  mapContainer: { borderRadius: '12px', overflow: 'hidden', border: '1px solid #1F2937', display: 'flex', flexDirection: 'column' },
   tableContainer: { backgroundColor: '#111827', padding: '15px', borderRadius: '12px', border: '1px solid #1F2937' },
   tableTitle: { margin: '0 0 10px 0', color: 'white', fontSize: '14px', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: '#9CA3AF' },
