@@ -15,7 +15,7 @@ export default function Login() {
   const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
-    // Detectar si la app ya está instalada y ejecutándose de forma nativa
+    // Detectar si la app ya está instalada o ejecutándose de forma nativa
     if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
       setIsInstalled(true);
     }
@@ -40,6 +40,9 @@ export default function Login() {
       if (outcome === 'accepted') {
         setDeferredPrompt(null);
       }
+    } else {
+      // Si el navegador oculta el prompt automático, le damos instrucciones al usuario
+      alert("Tu navegador bloqueó la instalación automática. Para instalar la App, abre el menú de opciones de tu navegador (los 3 puntitos arriba a la derecha) y selecciona 'Instalar aplicación' o 'Agregar a la pantalla principal'.");
     }
   };
   // ----------------------------------------------------
@@ -108,8 +111,8 @@ export default function Login() {
         `}
       </style>
 
-      {/* 2. BANNER DE INSTALACIÓN (Se oculta si isInstalled es true) */}
-      {deferredPrompt && isMobileView && !isInstalled && (
+      {/* 2. BANNER DE INSTALACIÓN (Ahora aparece SIEMPRE en móviles, a menos que la app ya esté instalada) */}
+      {isMobileView && !isInstalled && (
         <div style={{ position: 'absolute', top: '15px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', maxWidth: '400px', justifyContent: 'space-between', animation: 'fadeIn 0.5s ease' }}>
           <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
           <button onClick={handleInstallApp} style={{ backgroundColor: 'white', color: '#2563EB', border: 'none', padding: '5px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Descargar</button>
@@ -188,7 +191,8 @@ export default function Login() {
 }
 
 const styles = {
-  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px', position: 'relative', overflow: 'hidden' },
+  // CORRECCIÓN APLICADA AQUÍ: boxSizing: 'border-box' elimina el error de scroll
+  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0B1120', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", padding: '20px', position: 'relative', overflow: 'hidden', boxSizing: 'border-box' },
   loginCard: { backgroundColor: '#FFFFFF', padding: '40px', borderRadius: '15px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '100%', maxWidth: '420px', textAlign: 'center' },
   header: { marginBottom: '30px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   companyName: { margin: 0, fontSize: '24px', letterSpacing: '3px', color: '#0B1120', fontWeight: '800' },
