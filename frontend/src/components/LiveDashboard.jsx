@@ -56,12 +56,11 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-// NUEVA LÓGICA: Monitor de Alarma de Encendido (Vigilancia) BLINDADO PARA MÓVILES 🛡️
+// LÓGICA DE ALARMA CORREGIDA: Ahora también suena si el carro se mueve (velocidad > 0)
   useEffect(() => {
     try {
       const hasNotificationAPI = 'Notification' in window;
 
-      // Solicitar permisos sin interrumpir el flujo si falla
       if (hasNotificationAPI && Notification.permission !== "granted" && Notification.permission !== "denied") {
         Notification.requestPermission().catch(e => console.warn("Permisos ignorados", e));
       }
@@ -76,21 +75,23 @@ export default function LiveDashboard({ devices, positions }) {
         const isArmed = armedDevices[deviceId];
         const pos = positions[deviceId];
         
-        // Si está vigilado y detecta encendido (ignition: true)
-        if (isArmed && pos && pos.attributes && pos.attributes.ignition) {
-          alarmTriggered = true;
-          deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
-          
-          // Apagamos la vigilancia para no entrar en bucle infinito
-          updatedArmedDevices[deviceId] = false;
+        if (pos) {
+          // Si el vehículo reporta ignición verdadera o si se está moviendo (>0 km/h)
+          const isMoving = pos.speed > 0;
+          const physicalIgnition = pos.attributes?.ignition;
+          const isEngineOn = isMoving || physicalIgnition;
+
+          if (isArmed && isEngineOn) {
+            alarmTriggered = true;
+            deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+            updatedArmedDevices[deviceId] = false; // Apagamos la vigilancia
+          }
         }
       });
 
       if (alarmTriggered) {
-        // 1. Apagamos el botón de inmediato
         setArmedDevices(updatedArmedDevices);
 
-        // 2. REPRODUCIR SONIDO PRIMERO (Blindado para que no detenga el código si falla)
         try {
           const alarmSound = new Audio('/alarma-agresiva.mp3'); 
           alarmSound.loop = false;
@@ -99,22 +100,18 @@ export default function LiveDashboard({ devices, positions }) {
           console.error("Error en el objeto Audio:", audioErr);
         }
 
-        // 3. INTENTAR NOTIFICACIÓN CON 'PLAN B' DE EMERGENCIA
         try {
           if (hasNotificationAPI && Notification.permission === "granted") {
-            // Peligro: En Android/Chrome esto lanza "Illegal constructor" si no hay Service Worker
             new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
-              body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`,
+              body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`,
               icon: '/favicon.ico', 
               vibrate: [500, 250, 500, 250, 500] 
             });
           } else {
-            // Si el usuario no dio permisos, usamos la alerta nativa
-            alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+            alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`);
           }
         } catch (notifError) {
-          // PLAN B: Si 'new Notification' colapsa (muy común en celulares), forzamos la alerta normal
-          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO.`);
+          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`);
         }
       }
     } catch (error) {
@@ -129,7 +126,6 @@ export default function LiveDashboard({ devices, positions }) {
   const movingCount = Object.values(positions).filter(p => p && p.speed > 0).length;
   const stoppedCount = Object.values(positions).filter(p => p && p.speed === 0).length;
 
-  // Lógica de Comandos GPRS
   const handleEngineControl = async (deviceId, deviceName, stopEngine) => {
     const actionText = stopEngine ? 'APAGAR EL MOTOR' : 'HABILITAR EL ENCENDIDO';
     const commandData = stopEngine ? 'RELAY,1#' : 'RELAY,0#';
@@ -244,14 +240,19 @@ export default function LiveDashboard({ devices, positions }) {
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
         <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%', zoomControl: false }} ref={setMap}>
-<TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          
+          <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
               if (!pos) return null;
               
               const batteryInfo = getBatteryInfo(device, pos);
-              const ignition = pos.attributes?.ignition;
-              const hasIgnition = ignition !== undefined && ignition !== null;
+              
+              // LÓGICA DE IGNICIÓN CORREGIDA PARA EL MAPA
+              const isMoving = pos.speed > 0;
+              const rawIgnition = pos.attributes?.ignition;
+              const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
+              const finalIgnition = isMoving ? true : rawIgnition;
 
               return (
                 <Marker key={device.id} position={[pos.latitude, pos.longitude]} icon={createCustomMarker(device.name, pos.speed, device.status)} eventHandlers={{ click: () => handleDeviceClick(device, pos) }}>
@@ -259,7 +260,7 @@ export default function LiveDashboard({ devices, positions }) {
                     <b style={{color:'black', fontSize:'13px'}}>{device.name}</b><br/>
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Estado: {device.status === 'online' ? '🟢 Conectado' : '🔴 Fuera de Línea'}</span><br/>
-                    {hasIgnition && (<span style={{color: ignition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {ignition ? 'Encendido' : 'Apagado'}</span>)}<br/>
+                    {hasIgnition && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
                     {batteryInfo.text && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
                   </Popup>
                 </Marker>
@@ -269,7 +270,7 @@ export default function LiveDashboard({ devices, positions }) {
         </MapContainer>
       </div>
 
-      {/* 🛠️ KPIs - AHORA SOLO SE MUESTRAN SI NO ES MÓVIL (!isMobile) */}
+      {/* 🛠️ KPIs */}
       {!isMobile && (
         <div style={{ position: 'absolute', bottom: 30, left: 15, zIndex: 1000, display: 'flex', flexWrap: 'wrap', gap: '8px', pointerEvents: 'none', maxWidth: 'calc(100vw - 30px)' }}>
           <div onClick={() => setFilter('all')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'all' ? '1.5px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)'}}>
@@ -292,32 +293,18 @@ export default function LiveDashboard({ devices, positions }) {
 
       {/* PANEL FLOTANTE DE UNIDADES */}
       <div style={{ 
-        position: 'absolute', 
-        top: 15, 
-        right: 15, 
-        bottom: isListOpen ? 15 : 'auto', 
-        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '320px') : '44px', // Ensanchado un poco a 320px para acomodar el nuevo botón
-        height: isListOpen ? 'auto' : '44px',
-        maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
-        backgroundColor: 'rgba(15, 23, 42, 0.85)', 
-        backdropFilter: 'blur(16px)', 
-        borderRadius: '14px', 
-        border: '1px solid rgba(255,255,255,0.08)', 
-        zIndex: 1000, 
-        display: 'flex', 
-        flexDirection: 'column', 
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-        overflow: 'hidden' 
+        position: 'absolute', top: 15, right: 15, bottom: isListOpen ? 15 : 'auto', 
+        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '320px') : '44px', 
+        height: isListOpen ? 'auto' : '44px', maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
+        backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', borderRadius: '14px', 
+        border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, display: 'flex', flexDirection: 'column', 
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' 
       }}>
         
         <div style={{ 
-          padding: isListOpen ? '14px 16px' : '0', 
-          height: isListOpen ? 'auto' : '100%',
-          borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', 
-          display: 'flex', 
-          justifyContent: isListOpen ? 'space-between' : 'center', 
-          alignItems: 'center' 
+          padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%',
+          borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', 
+          justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' 
         }}>
           {isListOpen && (
             <div>
@@ -326,18 +313,10 @@ export default function LiveDashboard({ devices, positions }) {
             </div>
           )}
           <button onClick={() => setIsListOpen(!isListOpen)} style={{ 
-            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', 
-            border: 'none', 
-            color: '#9CA3AF', 
-            cursor: 'pointer', 
-            fontSize: isListOpen ? '14px' : '18px', 
-            width: isListOpen ? '28px' : '100%', 
-            height: isListOpen ? '28px' : '100%', 
-            borderRadius: '8px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            transition: 'all 0.2s' 
+            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', 
+            color: '#9CA3AF', cursor: 'pointer', fontSize: isListOpen ? '14px' : '18px', 
+            width: isListOpen ? '28px' : '100%', height: isListOpen ? '28px' : '100%', borderRadius: '8px', 
+            display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' 
           }}>
             {isListOpen ? '✕' : '🚚'}
           </button>
@@ -349,8 +328,6 @@ export default function LiveDashboard({ devices, positions }) {
               const pos = getDevicePosition(device.id);
               const isMoving = pos && pos.speed > 0;
               const isSelected = selectedDevice?.id === device.id;
-              
-              // Estado actual de la alarma para este vehículo
               const isArmed = armedDevices[device.id] || false;
 
               let statusDotColor = '#8B5CF6'; 
@@ -358,8 +335,11 @@ export default function LiveDashboard({ devices, positions }) {
               else if (isMoving) statusDotColor = '#10B981'; 
 
               const batteryInfo = getBatteryInfo(device, pos);
-              const ignition = pos?.attributes?.ignition;
-              const hasIgnition = ignition !== undefined && ignition !== null;
+              
+              // LÓGICA DE IGNICIÓN CORREGIDA PARA LA LISTA
+              const rawIgnition = pos?.attributes?.ignition;
+              const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
+              const finalIgnition = isMoving ? true : rawIgnition;
 
               return (
                 <div 
@@ -378,10 +358,10 @@ export default function LiveDashboard({ devices, positions }) {
                       
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
                         {hasIgnition && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: ignition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${ignition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }} title={ignition ? 'Motor Encendido' : 'Motor Apagado'}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: finalIgnition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${finalIgnition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }} title={finalIgnition ? 'Motor Encendido' : 'Motor Apagado'}>
                             <span style={{ fontSize: '10px' }}>🔑</span>
-                            <span style={{ fontSize: '9px', color: ignition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
-                              {ignition ? 'ON' : 'OFF'}
+                            <span style={{ fontSize: '9px', color: finalIgnition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
+                              {finalIgnition ? 'ON' : 'OFF'}
                             </span>
                           </div>
                         )}
@@ -405,7 +385,6 @@ export default function LiveDashboard({ devices, positions }) {
                       {/* MICRO-BOTONES */}
                       <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
                         
-                        {/* 🛠️ NUEVO BOTÓN: VIGILAR (ALARMA) */}
                         <button 
                           title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
                           onClick={(e) => {
