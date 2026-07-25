@@ -33,13 +33,11 @@ export default function Dashboard() {
   const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
 
   useEffect(() => {
-    // Escuchar el evento de instalación de PWA
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setDeferredPrompt(e); 
     });
 
-    // Escuchar cuando la pantalla cambie de tamaño
     const handleResize = () => setIsMobileView(window.innerWidth <= 768);
     window.addEventListener('resize', handleResize);
     
@@ -66,7 +64,8 @@ export default function Dashboard() {
 
     const fetchData = async () => {
       try {
-        const headers = { 'Authorization': `Basic ${token}` };
+        const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
+        
         const [resDevices, resPositions] = await Promise.all([
           fetch('https://api.globalmonitorgps.com/api/devices', { headers }), 
           fetch('https://api.globalmonitorgps.com/api/positions', { headers })
@@ -103,10 +102,8 @@ export default function Dashboard() {
   return (
     <>
       <style>{`
-        /* REGLA MAESTRA: Evita que los márgenes sumen tamaño extra a la pantalla */
         * { box-sizing: border-box; }
 
-        /* ESTILOS BASE (ESCRITORIO) */
         .layout-main {
           display: flex;
           height: 100vh;
@@ -176,12 +173,11 @@ export default function Dashboard() {
           text-overflow: ellipsis;
         }
 
-        /* Botón de Instalación dentro del menú */
         .install-btn {
           background: transparent;
           border: none;
           border-bottom: 1px solid #374151;
-          color: #3B82F6; /* Color azul para destacar */
+          color: #3B82F6; 
           cursor: pointer;
           font-size: 13px;
           padding: 12px;
@@ -211,64 +207,19 @@ export default function Dashboard() {
         }
         .logout-btn:hover { background-color: rgba(239, 68, 68, 0.1); }
 
-        /* DISEÑO RESPONSIVE (MÓVIL) */
         @media (max-width: 768px) {
-          .layout-main {
-            flex-direction: column;
-          }
-          
-          .sidebar {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%; 
-            height: 60px;
-            flex-direction: row;
-            border-right: none;
-            border-top: 1px solid #1F2937;
-            padding: 0 15px;
-            justify-content: space-between;
-          }
-
-          .main-content {
-            height: calc(100dvh - 60px);
-            width: 100%;
-          }
-
+          .layout-main { flex-direction: column; }
+          .sidebar { position: fixed; bottom: 0; left: 0; width: 100%; height: 60px; flex-direction: row; border-right: none; border-top: 1px solid #1F2937; padding: 0 15px; justify-content: space-between; }
+          .main-content { height: calc(100dvh - 60px); width: 100%; }
           .logo-container { display: none; }
-          
-          .nav-menu {
-            flex: 1;
-            flex-direction: row;
-            justify-content: space-around; 
-            align-items: center;
-            height: 100%;
-            margin-right: 10px;
-          }
-
-          .user-panel {
-            flex-shrink: 0;
-            flex-direction: row;
-            justify-content: center;
-            width: auto;
-            padding-top: 0;
-            border-top: none;
-            border-left: 1px solid #1F2937; 
-            padding-left: 15px; 
-            height: 100%;
-          }
-
-          .user-menu-dropdown {
-            left: auto;
-            right: 15px;
-            bottom: 70px;
-          }
+          .nav-menu { flex: 1; flex-direction: row; justify-content: space-around; align-items: center; height: 100%; margin-right: 10px; }
+          .user-panel { flex-shrink: 0; flex-direction: row; justify-content: center; width: auto; padding-top: 0; border-top: none; border-left: 1px solid #1F2937; padding-left: 15px; height: 100%; }
+          .user-menu-dropdown { left: auto; right: 15px; bottom: 70px; }
         }
       `}</style>
 
       <div className="layout-main">
         
-        {/* SIDEBAR ADAPTADO */}
         <aside className="sidebar">
           <div className="logo-container" title="Global GPS Monitor">
             <img src="/logo.png" alt="Logo" style={{ width: '22px', filter: 'drop-shadow(0px 2px 4px rgba(37, 99, 235, 0.7))' }} />
@@ -283,19 +234,17 @@ export default function Dashboard() {
               <MenuIcon path="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /> 
             </div>
 
-            {/* Filtro: Solo se muestran si NO estamos en celular */}
+            {/* Filtros ocultos en móvil para no saturar la barra */}
             {!isMobileView && (
               <>
                 <div onClick={() => setActiveTab('report')} title="Informes y Analíticas" style={{...styles.navItem, ...(activeTab === 'report' ? styles.navItemActive : {})}}>
                   <MenuIcon path="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /> 
                 </div>
                 
-                {/* BOTÓN DE RUTAS LABORALES BLINDADO PARA ADMIN */}
-                {currentUser?.administrator && (
-                  <div onClick={() => setActiveTab('workRoutes')} title="Informe Rutas Laborales" style={{...styles.navItem, ...(activeTab === 'workRoutes' ? styles.navItemActive : {})}}>
-                    <MenuIcon path="M2 9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /> 
-                  </div>
-                )}
+                {/* BOTÓN DE RUTAS LABORALES - PÚBLICO PARA TODOS */}
+                <div onClick={() => setActiveTab('workRoutes')} title="Informe Rutas Laborales" style={{...styles.navItem, ...(activeTab === 'workRoutes' ? styles.navItemActive : {})}}>
+                  <MenuIcon path="M2 9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /> 
+                </div>
               </>
             )}
 
@@ -311,6 +260,7 @@ export default function Dashboard() {
               <MenuIcon path="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13" /> 
             </div>
             
+            {/* EL PANEL DE ADMINISTRACIÓN SIGUE ESTRICTAMENTE PROTEGIDO SÓLO PARA ADMINS */}
             {currentUser?.administrator && (
               <div onClick={() => setActiveTab('admin')} title="Panel de Administración" style={{...styles.navItem, ...(activeTab === 'admin' ? styles.navItemActive : {}), color: activeTab === 'admin' ? 'white' : '#F59E0B' }}>
                 <MenuIcon path="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /> 
@@ -319,38 +269,26 @@ export default function Dashboard() {
           </nav>
 
           <div className="user-panel">
-            {/* Círculo interactivo */}
             <div 
               onClick={() => setShowUserMenu(!showUserMenu)}
               title="Opciones de perfil" 
               style={{ 
-                backgroundColor: '#2563EB', 
-                color: 'white', 
-                width: '28px', 
-                height: '28px', 
-                borderRadius: '50%', 
-                display: 'flex', 
-                justifyContent: 'center', 
-                alignItems: 'center', 
-                fontWeight: 'bold', 
-                fontSize: '13px',
-                cursor: 'pointer',
-                boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
-                transition: 'transform 0.2s',
+                backgroundColor: '#2563EB', color: 'white', width: '28px', height: '28px', 
+                borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', 
+                fontWeight: 'bold', fontSize: '13px', cursor: 'pointer',
+                boxShadow: '0 2px 5px rgba(0,0,0,0.3)', transition: 'transform 0.2s',
                 transform: showUserMenu ? 'scale(1.1)' : 'scale(1)'
               }}
             >
               {currentUser ? currentUser.name.charAt(0).toUpperCase() : 'U'}
             </div>
             
-            {/* Menú flotante (Se abre al tocar el círculo del usuario) */}
             {showUserMenu && (
               <div className="user-menu-dropdown">
                 <div className="user-menu-header">
                   {currentUser ? currentUser.name : 'Usuario'}
                 </div>
 
-                {/* BOTÓN BACKUP DE INSTALACIÓN DENTRO DEL MENÚ */}
                 {deferredPrompt && isMobileView && (
                   <button onClick={handleInstallApp} className="install-btn">
                     📱 Instalar App
@@ -368,8 +306,6 @@ export default function Dashboard() {
 
         {/* CONTENIDO PRINCIPAL */}
         <div className="main-content">
-          
-          {/* BANNER DE INSTALACIÓN PRINCIPAL (Flota arriba) */}
           {deferredPrompt && isMobileView && (
             <div style={{ position: 'absolute', top: '15px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, backgroundColor: '#2563EB', color: 'white', padding: '10px 15px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', width: '90%', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '12px', fontWeight: 'bold' }}>📱 Instalar Global GPS App</span>
@@ -377,20 +313,20 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Ocultar el menú al hacer clic en el área principal */}
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }} onClick={() => showUserMenu && setShowUserMenu(false)}>
             {activeTab === 'dashboard' && <LiveDashboard devices={devices} positions={positions} />}
             {activeTab === 'route' && <RoutePlayback devices={devices} token={token} />}
-            
             {activeTab === 'report' && <Reports devices={devices} token={token} />}
             
-            {/* COMPONENTE DE RUTAS LABORALES BLINDADO PARA ADMIN */}
-            {currentUser?.administrator && activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
+            {/* RENDERIZADO DE RUTAS LABORALES PÚBLICO PARA TODOS */}
+            {activeTab === 'workRoutes' && <WorkRoutesReport devices={devices} />} 
             
             {activeTab === 'geofences' && <Geofences />}
             {activeTab === 'alerts' && <Alerts devices={devices} token={token} />} 
             {activeTab === 'share' && <ShareLocation devices={devices} token={token} />}
-            {activeTab === 'admin' && <AdminPanel devices={devices} token={token} currentUser={currentUser} />}
+            
+            {/* EL PANEL DE ADMINISTRACIÓN SIGUE ESTRICTAMENTE PROTEGIDO SÓLO PARA ADMINS */}
+            {currentUser?.administrator && activeTab === 'admin' && <AdminPanel devices={devices} token={token} currentUser={currentUser} />}
           </div>
         </div>
 

@@ -1,295 +1,422 @@
 import React, { useState, useEffect } from 'react';
 
-export default function UserManagement({ token, devices }) {
-  const [allUsers, setAllUsers] = useState([]);
-  const [assignedDevicesMap, setAssignedDevicesMap] = useState({}); 
-  
-  const [userForm, setUserForm] = useState({ name: '', cedula: '', usuario: '', password: '' });
-  const [editingUserId, setEditingUserId] = useState(null);
-  
-  const [assignForm, setAssignForm] = useState({ userId: '', deviceId: '' });
-  const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
-  
-  // NUEVO: Estado para el buscador
+const BASE_URL = 'https://api.globalmonitorgps.com';
+
+export default function UserManagement({ devices, token }) {
+  const [users, setUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const BASE_URL = 'https://api.globalmonitorgps.com';
+  // Estado para guardar qué dispositivos tiene asignados cada usuario
+  const [userDevices, setUserDevices] = useState({});
+  const [selectedDeviceToLink, setSelectedDeviceToLink] = useState({});
 
-  useEffect(() => {
-    fetchUsersAndDevices();
-    // eslint-disable-next-line
-  }, [token]);
-
-  const fetchUsersAndDevices = async () => {
-    try {
-      const resUsers = await fetch(`${BASE_URL}/api/users`, { headers: { 'Authorization': `Basic ${token}` } });
-      if (!resUsers.ok) return;
-      const usersData = await resUsers.json();
-
-      const mapping = {};
-      await Promise.all(usersData.map(async (u) => {
-          const resDev = await fetch(`${BASE_URL}/api/devices?userId=${u.id}`, { headers: { 'Authorization': `Basic ${token}` } });
-          if (resDev.ok) {
-              mapping[u.id] = await resDev.json();
-          } else {
-              mapping[u.id] = [];
-          }
-      }));
-
-      setAssignedDevicesMap(mapping);
-      setAllUsers(usersData);
-    } catch (err) {
-      console.error("Error cargando usuarios:", err);
-    }
-  };
-
-  const handleSaveUser = async (e) => {
-    e.preventDefault();
-    const payload = {
-        name: userForm.name,
-        phone: userForm.cedula,
-        email: userForm.usuario, 
-        password: userForm.password
-    };
-
-    let url = `${BASE_URL}/api/users`;
-    let method = 'POST';
-
-    if (editingUserId) {
-        url = `${BASE_URL}/api/users/${editingUserId}`;
-        method = 'PUT';
-        payload.id = editingUserId;
-    }
-
-    const res = await fetch(url, { 
-        method: method, 
-        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(payload) 
-    });
-
-    if (res.ok) { 
-        setAdminMessage({ text: editingUserId ? 'Cliente actualizado exitosamente.' : 'Cliente creado exitosamente.', type: 'success' });
-        setUserForm({ name: '', cedula: '', usuario: '', password: '' }); 
-        setEditingUserId(null);
-        fetchUsersAndDevices();
-    } else {
-        setAdminMessage({ text: 'Error al procesar. Verifique que el usuario no exista ya.', type: 'error' });
-    }
-  };
-
-  const handleDeleteUser = async (id) => {
-      if (!window.confirm("🚨 ¿Estás seguro de eliminar este cliente? Perderá el acceso a la plataforma.")) return;
-      const res = await fetch(`${BASE_URL}/api/users/${id}`, { method: 'DELETE', headers: { 'Authorization': `Basic ${token}` } });
-      if (res.ok) { 
-          setAdminMessage({ text: 'Usuario eliminado correctamente.', type: 'success' });
-          if (editingUserId === id) {
-              setUserForm({ name: '', cedula: '', usuario: '', password: '' });
-              setEditingUserId(null);
-          }
-          fetchUsersAndDevices();
-      }
-  };
-
-  const handleEditClick = (u) => {
-      setUserForm({ name: u.name, cedula: u.phone || '', usuario: u.email, password: '' });
-      setEditingUserId(u.id);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleAssignPermissions = async (e) => {
-    e.preventDefault();
-    const res = await fetch(`${BASE_URL}/api/permissions`, { 
-        method: 'POST', 
-        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: parseInt(assignForm.userId), deviceId: parseInt(assignForm.deviceId) }) 
-    });
-
-    if (res.ok) { 
-        setAdminMessage({ text: '✅ Vehículo asignado al cliente correctamente.', type: 'success' });
-        setAssignForm({ ...assignForm, deviceId: '' }); 
-        fetchUsersAndDevices(); 
-    } else {
-        setAdminMessage({ text: 'Error al asignar el vehículo. Puede que ya esté asignado.', type: 'error' });
-    }
-  };
-
-  const handleUnlinkDevice = async (userId, deviceId, deviceName) => {
-    if (!window.confirm(`¿Deseas desvincular el vehículo "${deviceName}" de este cliente?`)) return;
-    
-    const res = await fetch(`${BASE_URL}/api/permissions`, { 
-        method: 'DELETE', 
-        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ userId: userId, deviceId: deviceId }) 
-    });
-
-    if (res.ok) {
-        setAdminMessage({ text: `Vehículo "${deviceName}" desvinculado con éxito.`, type: 'success' });
-        fetchUsersAndDevices();
-    } else {
-        setAdminMessage({ text: 'Error al intentar desvincular el vehículo.', type: 'error' });
-    }
-  };
-
-  // NUEVO: Lógica de Filtrado (Buscador)
-  const filteredUsers = allUsers.filter(u => {
-    const term = searchTerm.toLowerCase();
-    return (
-      (u.name && u.name.toLowerCase().includes(term)) ||
-      (u.email && u.email.toLowerCase().includes(term)) ||
-      (u.phone && u.phone.toLowerCase().includes(term))
-    );
+  // Estados para modal de usuario (Crear / Editar) con los campos exactos: Nombre, NIT/Cédula, Usuario, Contraseña
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    nitCedula: '',
+    email: '', // Traccar usa 'email' para el nombre de usuario de inicio de sesión
+    password: '',
+    administrator: false
   });
 
+  useEffect(() => {
+    fetchUsers();
+  }, [token]);
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE_URL}/api/users`, {
+        headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(data);
+        data.forEach(u => loadDevicesForUser(u.id));
+      }
+    } catch (err) {
+      console.error("Error cargando usuarios:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadDevicesForUser = async (userId) => {
+    try {
+      const res = await fetch(`${BASE_URL}/api/devices?userId=${userId}`, {
+        headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserDevices(prev => ({ ...prev, [userId]: data }));
+      }
+    } catch (err) {
+      console.error(`Error cargando dispositivos para el usuario ${userId}:`, err);
+    }
+  };
+
+  // --- LÓGICA DE VINCULACIÓN DE DISPOSITIVOS ---
+  const handleLinkDevice = async (userId) => {
+    const deviceId = selectedDeviceToLink[userId];
+    if (!deviceId) return;
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/permissions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: userId, deviceId: parseInt(deviceId) })
+      });
+      if (res.ok) {
+        loadDevicesForUser(userId);
+        setSelectedDeviceToLink(prev => ({ ...prev, [userId]: '' }));
+      } else {
+        alert("Error al vincular el dispositivo.");
+      }
+    } catch (err) {
+      console.error("Error vinculando:", err);
+    }
+  };
+
+  const handleUnlinkDevice = async (userId, deviceId) => {
+    if (!window.confirm("¿Desvincular este vehículo del usuario?")) return;
+    try {
+      const res = await fetch(`${BASE_URL}/api/permissions`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: userId, deviceId: deviceId })
+      });
+      if (res.ok) {
+        loadDevicesForUser(userId);
+      }
+    } catch (err) {
+      console.error("Error desvinculando:", err);
+    }
+  };
+
+  // --- LÓGICA DE PERMISO PREMIUM ---
+  const togglePremiumAccess = async (user) => {
+    const isPremium = user.attributes?.isPremium === true || user.attributes?.isPremium === 'true';
+    
+    const updatedUser = {
+      ...user,
+      attributes: {
+        ...(user.attributes || {}),
+        isPremium: !isPremium
+      }
+    };
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedUser)
+      });
+
+      if (res.ok) {
+        const savedUser = await res.json();
+        setUsers(prev => prev.map(u => u.id === user.id ? savedUser : u));
+      } else {
+        alert("Error al actualizar los permisos Premium.");
+      }
+    } catch (err) {
+      console.error("Error de conexión:", err);
+    }
+  };
+
+  // --- CRUD DE USUARIOS (Mapeando NIT/Cédula a atributos o teléfono) ---
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    try {
+      const url = editingUser ? `${BASE_URL}/api/users/${editingUser.id}` : `${BASE_URL}/api/users`;
+      const method = editingUser ? 'PUT' : 'POST';
+
+      const bodyData = {
+        ...editingUser,
+        name: formData.name,
+        email: formData.email, // Usuario
+        administrator: formData.administrator,
+        phone: formData.nitCedula, // Guardamos el NIT o Cédula en el campo teléfono de Traccar para mantener consistencia
+        ...(formData.password ? { password: formData.password } : {})
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      });
+
+      if (res.ok) {
+        fetchUsers();
+        setIsModalOpen(false);
+        resetForm();
+      } else {
+        alert("Error al guardar usuario. Verifica que el nombre de usuario sea único.");
+      }
+    } catch (err) {
+      console.error("Error guardando usuario:", err);
+    }
+  };
+
+  const handleEdit = (user) => {
+    setEditingUser(user);
+    setFormData({
+      name: user.name || '',
+      nitCedula: user.phone || '',
+      email: user.email || '',
+      password: '',
+      administrator: user.administrator || false
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (userId) => {
+    if (!window.confirm("¿Seguro que deseas eliminar permanentemente este usuario?")) return;
+    try {
+      const res = await fetch(`${BASE_URL}/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Basic ${token}` }
+      });
+      if (res.ok) {
+        setUsers(prev => prev.filter(u => u.id !== userId));
+      }
+    } catch (err) {
+      console.error("Error eliminando usuario:", err);
+    }
+  };
+
+  const resetForm = () => {
+    setEditingUser(null);
+    setFormData({ name: '', nitCedula: '', email: '', password: '', administrator: false });
+  };
+
+  const filteredUsers = users.filter(u => 
+    (u.name && u.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (u.email && u.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (u.phone && u.phone.includes(searchTerm))
+  );
+
   return (
-    <div>
+    <div style={{ color: '#F3F4F6', fontFamily: 'Inter, sans-serif' }}>
+      
       <style>{`
-        .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .vehicle-badge { 
-          display: inline-flex; align-items: center; gap: 6px; 
-          background-color: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3);
-          color: #60A5FA; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
-          margin: 2px; transition: all 0.2s;
-        }
-        .vehicle-badge:hover { border-color: #3B82F6; background-color: rgba(59, 130, 246, 0.25); }
-        .btn-unlink { 
-          background: transparent; border: none; color: #9CA3AF; cursor: pointer; 
-          font-size: 10px; padding: 0; margin: 0; font-weight: bold;
-        }
-        .btn-unlink:hover { color: #EF4444; }
-        .search-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
-        @media (max-width: 768px) {
-          .admin-form-group { display: flex; flex-direction: column; gap: 10px; }
-          .admin-card-container { padding: 15px !important; }
-          .search-input { width: 100% !important; max-width: none !important; }
-        }
+        .user-row { transition: background-color 0.2s ease; }
+        .user-row:hover { background-color: rgba(31, 41, 55, 0.8); }
+        .btn-primary { background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.3); }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.4); }
+        .custom-input { width: 100%; padding: 10px 12px; border-radius: 8px; background-color: #1F2937; border: 1px solid #374151; color: white; outline: none; transition: border-color 0.2s ease; }
+        .custom-input:focus { border-color: #3B82F6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+        .glass-modal { background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(8px); position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; display: flex; justify-content: center; align-items: center; }
       `}</style>
 
-      {adminMessage.text && (
-          <div style={{backgroundColor: adminMessage.type === 'success' ? '#065F46' : '#991B1B', color: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px'}}>
-              {adminMessage.text}
-          </div>
-      )}
-      
-      <div className="admin-grid">
-        <div style={{...styles.adminCard, border: editingUserId ? '1px solid #3B82F6' : '1px solid #1F2937'}} className="admin-card-container">
-          <h3 style={styles.adminCardTitle}>{editingUserId ? 'Editar Cliente ✏️' : 'Crear Nuevo Cliente'}</h3>
-          <form onSubmit={handleSaveUser} className="admin-form-group" style={styles.form}>
-            <input type="text" placeholder="Nombre completo" required value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} style={styles.input} />
-            <input type="text" placeholder="Cédula / NIT" required value={userForm.cedula} onChange={e => setUserForm({...userForm, cedula: e.target.value})} style={styles.input} />
-            <input type="text" placeholder="Usuario (Ej: cliente1)" required value={userForm.usuario} onChange={e => setUserForm({...userForm, usuario: e.target.value})} style={styles.input} />
-            <input type="password" placeholder={editingUserId ? "Nueva Contraseña (Opcional)" : "Contraseña"} required={!editingUserId} value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} style={styles.input} />
-            
-            <div style={{display: 'flex', gap: '10px'}}>
-              <button type="submit" style={{...styles.btn, flex: 1}}>{editingUserId ? 'Guardar Cambios' : 'Registrar Usuario'}</button>
-              {editingUserId && <button type="button" onClick={() => {setEditingUserId(null); setUserForm({ name: '', cedula: '', usuario: '', password: '' })}} style={{...styles.btn, backgroundColor:'#374151'}}>Cancelar</button>}
-            </div>
-          </form>
-        </div>
-
-        <div style={styles.adminCard} className="admin-card-container">
-          <h3 style={styles.adminCardTitle}>Vincular Flota (1 a N) 🔗</h3>
-          <p style={{color: '#9CA3AF', fontSize: '12px', marginBottom: '15px'}}>Asigna uno o múltiples vehículos a un mismo cliente para que pueda monitorearlos.</p>
-          <form onSubmit={handleAssignPermissions} className="admin-form-group" style={styles.form}>
-            <select required value={assignForm.userId} onChange={e => setAssignForm({...assignForm, userId: e.target.value})} style={styles.input}>
-              <option value="">-- 1. Seleccionar Cliente --</option>
-              {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            <select required value={assignForm.deviceId} onChange={e => setAssignForm({...assignForm, deviceId: e.target.value})} style={styles.input}>
-              <option value="">-- 2. Seleccionar GPS --</option>
-              {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            <button type="submit" style={{...styles.btn, backgroundColor:'#F59E0B'}}>+ Asignar Vehículo al Cliente</button>
-          </form>
-        </div>
-      </div>
-
-      {/* TABLA DE USUARIOS Y VEHÍCULOS ASIGNADOS */}
-      <div style={{...styles.adminCard, marginTop: '20px'}} className="admin-card-container">
-        
-        {/* NUEVO: Contenedor del Buscador */}
-        <div className="search-container">
-          <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
-            Directorio y Accesos ({filteredUsers.length})
-          </h3>
+      {/* BARRA SUPERIOR: BUSCADOR Y BOTÓN NUEVO */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', flexWrap: 'wrap', gap: '15px' }}>
+        <div style={{ position: 'relative', width: '350px', maxWidth: '100%' }}>
+          <span style={{ position: 'absolute', left: '12px', top: '10px', color: '#9CA3AF' }}>🔍</span>
           <input 
             type="text" 
-            placeholder="🔍 Buscar por nombre, email o cédula..." 
+            placeholder="Buscar por nombre, NIT/Cédula o usuario..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{...styles.input, width: '100%', maxWidth: '300px'}}
-            className="search-input"
+            className="custom-input"
+            style={{ paddingLeft: '38px', backgroundColor: '#111827' }}
           />
         </div>
 
-        <div style={{overflowX: 'auto', borderTop: '1px solid #1F2937', paddingTop: '10px'}}>
-            <table style={styles.table}>
-                <thead>
-                    <tr>
-                        <th style={styles.th}>Datos del Cliente</th>
-                        <th style={styles.th}>Vehículos Asignados a su Cuenta</th>
-                        <th style={styles.th}>Usuario / Clave</th>
-                        <th style={styles.th}>Acciones</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {/* Renderizamos la tabla usando el array filtrado */}
-                    {filteredUsers.length === 0 ? (
-                      <tr><td colSpan="4" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron usuarios que coincidan con la búsqueda.</td></tr>
-                    ) : (
-                      filteredUsers.map(u => {
-                        const userDevices = assignedDevicesMap[u.id] || [];
-
-                        return (
-                          <tr key={u.id} style={styles.tr}>
-                              <td style={styles.td}>
-                                <strong style={{color: '#F3F4F6'}}>{u.name}</strong><br/>
-                                <span style={{color: '#9CA3AF', fontSize: '12px'}}>ID/NIT: {u.phone || 'N/A'}</span>
-                              </td>
-                              
-                              <td style={{...styles.td, maxWidth: '300px', whiteSpace: 'normal'}}>
-                                {userDevices.length > 0 ? (
-                                  userDevices.map(d => (
-                                    <div key={d.id} className="vehicle-badge">
-                                      🚗 {d.name}
-                                      <button className="btn-unlink" onClick={() => handleUnlinkDevice(u.id, d.id, d.name)} title="Desvincular GPS">✕</button>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <span style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic'}}>No tiene vehículos asignados</span>
-                                )}
-                              </td>
-
-                              <td style={styles.td}>
-                                <span style={{color: '#E5E7EB'}}>{u.email}</span><br/>
-                                <span style={{color: '#10B981', fontSize: '12px'}}>Segura 🔒</span>
-                              </td>
-
-                              <td style={styles.td}>
-                                  <button onClick={() => handleEditClick(u)} style={styles.actionBtnEdit}>✏️</button>
-                                  <button onClick={() => handleDeleteUser(u.id)} style={styles.actionBtnDelete}>🗑️</button>
-                              </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                </tbody>
-            </table>
-        </div>
+        <button onClick={() => { resetForm(); setIsModalOpen(true); }} className="btn-primary">
+          ➕ Nuevo Usuario
+        </button>
       </div>
+
+      {/* TABLA DE USUARIOS */}
+      <div style={{ backgroundColor: '#111827', borderRadius: '12px', border: '1px solid #1F2937', overflowX: 'auto', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#1F2937', color: '#9CA3AF', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Nombre / NIT o Cédula</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Usuario</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Rol</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Flota Asignada (Vehículos)</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151', textAlign: 'center' }}>Módulo Premium</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151', textAlign: 'center' }}>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#6B7280', fontSize: '14px' }}>
+                  {loading ? '⏳ Cargando base de datos...' : 'No se encontraron usuarios.'}
+                </td>
+              </tr>
+            ) : (
+              filteredUsers.map((user) => {
+                const isPremium = user.attributes?.isPremium === true || user.attributes?.isPremium === 'true';
+                const assignedDevices = userDevices[user.id] || [];
+
+                return (
+                  <tr key={user.id} className="user-row" style={{ borderBottom: '1px solid #1F2937' }}>
+                    
+                    {/* COLUMNA 1: Nombre y NIT/Cédula */}
+                    <td style={{ padding: '12px 20px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#F3F4F6', fontSize: '14px' }}>{user.name}</div>
+                      <div style={{ color: '#9CA3AF', fontSize: '12px', marginTop: '2px' }}>NIT/Cédula: {user.phone || 'N/A'}</div>
+                    </td>
+
+                    {/* COLUMNA 2: Usuario */}
+                    <td style={{ padding: '12px 20px', color: '#38BDF8', fontWeight: '500', fontSize: '13.5px' }}>
+                      {user.email}
+                    </td>
+                    
+                    {/* COLUMNA 3: Rol */}
+                    <td style={{ padding: '12px 20px' }}>
+                      <span style={{ 
+                        padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', display: 'inline-block',
+                        backgroundColor: user.administrator ? 'rgba(245, 158, 11, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                        color: user.administrator ? '#F59E0B' : '#60A5FA',
+                        border: `1px solid ${user.administrator ? 'rgba(245, 158, 11, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`
+                      }}>
+                        {user.administrator ? '👑 Administrador' : '👤 Cliente'}
+                      </span>
+                    </td>
+
+                    {/* COLUMNA 4: Vehículos Asignados */}
+                    <td style={{ padding: '8px 20px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
+                        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                          <select 
+                            value={selectedDeviceToLink[user.id] || ''} 
+                            onChange={(e) => setSelectedDeviceToLink(prev => ({ ...prev, [user.id]: e.target.value }))}
+                            style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#1F2937', color: '#FFF', border: '1px solid #374151', fontSize: '11px', flex: 1, outline: 'none' }}
+                          >
+                            <option value="">+ Vincular vehículo...</option>
+                            {devices?.map(dev => {
+                              if (assignedDevices.find(ad => ad.id === dev.id)) return null;
+                              return <option key={dev.id} value={dev.id}>{dev.name}</option>
+                            })}
+                          </select>
+                          <button 
+                            onClick={() => handleLinkDevice(user.id)}
+                            style={{ padding: '4px 10px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', height: '25px' }}
+                          >
+                            Añadir
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {assignedDevices.map(d => (
+                            <span key={d.id} style={{ 
+                              backgroundColor: '#374151', color: '#D1D5DB', fontSize: '10px', 
+                              padding: '2px 6px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px',
+                              border: '1px solid #4B5563'
+                            }}>
+                              🚘 {d.name}
+                              <button 
+                                onClick={() => handleUnlinkDevice(user.id, d.id)}
+                                style={{ background: 'none', border: 'none', color: '#F87171', cursor: 'pointer', padding: '0', fontSize: '11px', fontWeight: 'bold' }}
+                                title="Desvincular"
+                              >×</button>
+                            </span>
+                          ))}
+                          {assignedDevices.length === 0 && <span style={{ color: '#6B7280', fontSize: '11px', fontStyle: 'italic' }}>Sin vehículos vinculados</span>}
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* COLUMNA 5: Botón Premium */}
+                    <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                      <button
+                        onClick={() => togglePremiumAccess(user)}
+                        title={isPremium ? 'Revocar acceso' : 'Otorgar acceso a Rutas Laborales'}
+                        style={{
+                          padding: '6px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
+                          backgroundColor: isPremium ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.1)',
+                          color: isPremium ? '#10B981' : '#9CA3AF',
+                          border: `1px solid ${isPremium ? 'rgba(16, 185, 129, 0.4)' : 'rgba(107, 114, 128, 0.3)'}`
+                        }}
+                      >
+                        {isPremium ? '⭐ Premium' : '⚪ Estándar'}
+                      </button>
+                    </td>
+
+                    {/* COLUMNA 6: Acciones */}
+                    <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                      <button 
+                        onClick={() => handleEdit(user)}
+                        title="Editar Usuario"
+                        style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', color: '#60A5FA', padding: '6px', borderRadius: '6px', cursor: 'pointer', marginRight: '8px' }}
+                      >
+                        ✏️
+                      </button>
+                      <button 
+                        onClick={() => handleDelete(user.id)}
+                        title="Eliminar Usuario"
+                        style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#F87171', padding: '6px', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        🗑️
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* MODAL CREAR / EDITAR USUARIO CON DATOS REALES */}
+      {isModalOpen && (
+        <div className="glass-modal">
+          <div style={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '16px', padding: '30px', width: '90%', maxWidth: '450px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
+            <h3 style={{ margin: '0 0 25px 0', color: '#F3F4F6', fontSize: '18px' }}>
+              {editingUser ? '✏️ Editar Perfil de Usuario' : '➕ Crear Nuevo Usuario'}
+            </h3>
+            
+            <form onSubmit={handleSaveUser} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>Nombre *</label>
+                <input required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="custom-input" placeholder="Nombre completo o Empresa" />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>NIT o Cédula *</label>
+                <input required type="text" value={formData.nitCedula} onChange={e => setFormData({ ...formData, nitCedula: e.target.value })} className="custom-input" placeholder="Ej. 900123456-7 o 12345678" />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>Usuario (Login) *</label>
+                <input required type="text" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="custom-input" placeholder="Nombre de usuario para iniciar sesión" />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>
+                  Contraseña {editingUser && <span style={{ color: '#F59E0B', fontWeight: 'normal' }}>(Dejar en blanco para no cambiar)</span>}
+                </label>
+                <input type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} className="custom-input" placeholder="••••••••" />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', padding: '10px', backgroundColor: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', borderRadius: '8px' }}>
+                <input type="checkbox" id="adminCheck" checked={formData.administrator} onChange={e => setFormData({ ...formData, administrator: e.target.checked })} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                <label htmlFor="adminCheck" style={{ fontSize: '13px', color: '#F3F4F6', cursor: 'pointer', fontWeight: '500' }}>
+                  Es Administrador Global
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '15px' }}>
+                <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 18px', backgroundColor: 'transparent', color: '#9CA3AF', border: '1px solid #374151', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-primary">
+                  {editingUser ? 'Guardar Cambios' : 'Crear Usuario'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
-
-const styles = {
-  adminCard: { backgroundColor: '#111827', padding: '25px', borderRadius: '12px', border: '1px solid #1F2937' },
-  adminCardTitle: { color: 'white', fontSize: '16px', margin: '0 0 10px 0', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
-  form: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none' },
-  btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '700px' },
-  th: { padding: '12px 15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '13px', color: '#9CA3AF', whiteSpace: 'nowrap' },
-  tr: { borderBottom: '1px solid #1F2937' },
-  td: { padding: '12px 15px', fontSize: '14px', verticalAlign: 'top' },
-  actionBtnEdit: { background: 'transparent', border: '1px solid #3B82F6', color: '#3B82F6', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', marginRight: '8px' },
-  actionBtnDelete: { background: 'transparent', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer' }
-};
