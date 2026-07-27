@@ -7,17 +7,15 @@ export default function UserManagement({ devices, token }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Estado para guardar qué dispositivos tiene asignados cada usuario
   const [userDevices, setUserDevices] = useState({});
   const [selectedDeviceToLink, setSelectedDeviceToLink] = useState({});
 
-  // Estados para modal de usuario (Crear / Editar) con los campos exactos: Nombre, NIT/Cédula, Usuario, Contraseña
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     nitCedula: '',
-    email: '', // Traccar usa 'email' para el nombre de usuario de inicio de sesión
+    email: '', 
     password: '',
     administrator: false
   });
@@ -58,7 +56,6 @@ export default function UserManagement({ devices, token }) {
     }
   };
 
-  // --- LÓGICA DE VINCULACIÓN DE DISPOSITIVOS ---
   const handleLinkDevice = async (userId) => {
     const deviceId = selectedDeviceToLink[userId];
     if (!deviceId) return;
@@ -96,7 +93,6 @@ export default function UserManagement({ devices, token }) {
     }
   };
 
-  // --- LÓGICA DE PERMISO PREMIUM ---
   const togglePremiumAccess = async (user) => {
     const isPremium = user.attributes?.isPremium === true || user.attributes?.isPremium === 'true';
     
@@ -126,7 +122,6 @@ export default function UserManagement({ devices, token }) {
     }
   };
 
-  // --- CRUD DE USUARIOS (Mapeando NIT/Cédula a atributos o teléfono) ---
   const handleSaveUser = async (e) => {
     e.preventDefault();
     try {
@@ -136,9 +131,13 @@ export default function UserManagement({ devices, token }) {
       const bodyData = {
         ...editingUser,
         name: formData.name,
-        email: formData.email, // Usuario
+        email: formData.email, 
         administrator: formData.administrator,
-        phone: formData.nitCedula, // Guardamos el NIT o Cédula en el campo teléfono de Traccar para mantener consistencia
+        phone: formData.nitCedula, 
+        
+        // 🔴 LA MAGIA RESTAURADA: Esto convierte al cliente en "Manager" de sus propios enlaces
+        userLimit: formData.administrator ? 0 : 1000, 
+        
         ...(formData.password ? { password: formData.password } : {})
       };
 
@@ -211,7 +210,6 @@ export default function UserManagement({ devices, token }) {
         .glass-modal { background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(8px); position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; display: flex; justify-content: center; align-items: center; }
       `}</style>
 
-      {/* BARRA SUPERIOR: BUSCADOR Y BOTÓN NUEVO */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', flexWrap: 'wrap', gap: '15px' }}>
         <div style={{ position: 'relative', width: '350px', maxWidth: '100%' }}>
           <span style={{ position: 'absolute', left: '12px', top: '10px', color: '#9CA3AF' }}>🔍</span>
@@ -230,7 +228,6 @@ export default function UserManagement({ devices, token }) {
         </button>
       </div>
 
-      {/* TABLA DE USUARIOS */}
       <div style={{ backgroundColor: '#111827', borderRadius: '12px', border: '1px solid #1F2937', overflowX: 'auto', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
           <thead>
@@ -257,19 +254,15 @@ export default function UserManagement({ devices, token }) {
 
                 return (
                   <tr key={user.id} className="user-row" style={{ borderBottom: '1px solid #1F2937' }}>
-                    
-                    {/* COLUMNA 1: Nombre y NIT/Cédula */}
                     <td style={{ padding: '12px 20px' }}>
                       <div style={{ fontWeight: 'bold', color: '#F3F4F6', fontSize: '14px' }}>{user.name}</div>
                       <div style={{ color: '#9CA3AF', fontSize: '12px', marginTop: '2px' }}>NIT/Cédula: {user.phone || 'N/A'}</div>
                     </td>
 
-                    {/* COLUMNA 2: Usuario */}
                     <td style={{ padding: '12px 20px', color: '#38BDF8', fontWeight: '500', fontSize: '13.5px' }}>
                       {user.email}
                     </td>
                     
-                    {/* COLUMNA 3: Rol */}
                     <td style={{ padding: '12px 20px' }}>
                       <span style={{ 
                         padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', display: 'inline-block',
@@ -281,7 +274,6 @@ export default function UserManagement({ devices, token }) {
                       </span>
                     </td>
 
-                    {/* COLUMNA 4: Vehículos Asignados */}
                     <td style={{ padding: '8px 20px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
                         <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
@@ -324,7 +316,6 @@ export default function UserManagement({ devices, token }) {
                       </div>
                     </td>
 
-                    {/* COLUMNA 5: Botón Premium */}
                     <td style={{ padding: '12px 20px', textAlign: 'center' }}>
                       <button
                         onClick={() => togglePremiumAccess(user)}
@@ -341,7 +332,6 @@ export default function UserManagement({ devices, token }) {
                       </button>
                     </td>
 
-                    {/* COLUMNA 6: Acciones */}
                     <td style={{ padding: '12px 20px', textAlign: 'center' }}>
                       <button 
                         onClick={() => handleEdit(user)}
@@ -366,7 +356,6 @@ export default function UserManagement({ devices, token }) {
         </table>
       </div>
 
-      {/* MODAL CREAR / EDITAR USUARIO CON DATOS REALES */}
       {isModalOpen && (
         <div className="glass-modal">
           <div style={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '16px', padding: '30px', width: '90%', maxWidth: '450px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
@@ -376,7 +365,7 @@ export default function UserManagement({ devices, token }) {
             
             <form onSubmit={handleSaveUser} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>Nombre *</label>
+                <label style={{ display: 'block', fontSize: '12px', color: '#9CA3AF', marginBottom: '5px', fontWeight: 'bold' }}>Nombre Completo *</label>
                 <input required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="custom-input" placeholder="Nombre completo o Empresa" />
               </div>
 
@@ -400,7 +389,7 @@ export default function UserManagement({ devices, token }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', padding: '10px', backgroundColor: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', borderRadius: '8px' }}>
                 <input type="checkbox" id="adminCheck" checked={formData.administrator} onChange={e => setFormData({ ...formData, administrator: e.target.checked })} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
                 <label htmlFor="adminCheck" style={{ fontSize: '13px', color: '#F3F4F6', cursor: 'pointer', fontWeight: '500' }}>
-                  Es Administrador Global
+                  Otorgar privilegios de Administrador Global
                 </label>
               </div>
 
