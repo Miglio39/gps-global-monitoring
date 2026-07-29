@@ -262,8 +262,7 @@ export default function Dashboard() {
             </div>
 
             <div  onClick={() => setActiveTab('mantenimientos')}   title="Mantenimientos de Flota"   style={{...styles.navItem, ...(activeTab === 'mantenimientos' ? styles.navItemActive : {})}}>
-             <MenuIcon path="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /> 
-            </div>
+<MenuIcon path="M18.92 6C18.72 5.42 18.16 5 17.54 5H6.46C5.84 5 5.29 5.42 5.08 6L3 12V20C3 20.55 3.45 21 4 21H5C5.55 21 6 20.55 6 20V19H18V20C18 20.55 18.45 21 19 21H20C20.55 21 21 20.55 21 20V12L18.92 6Z" />            </div>
 
 
             

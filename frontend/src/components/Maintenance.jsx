@@ -1,234 +1,406 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 export default function Maintenance({ devices, token }) {
-  // Estado para la lista de mantenimientos (Simulado inicialmente para diseño, listo para conectar a API)
-  const [maintenances, setMaintenances] = useState([
-    { id: 1, deviceId: devices[0]?.id || 1, type: 'Cambio de Aceite', metric: 'Kilometraje', limit: '10000', status: 'overdue', date: '2026-07-28' },
-    { id: 2, deviceId: devices[1]?.id || 2, type: 'Renovación SOAT', metric: 'Fecha', limit: '2026-08-15', status: 'pending', date: '2026-08-15' }
-  ]);
-
-  const [formData, setFormData] = useState({ deviceId: '', type: 'Cambio de Aceite', metric: 'Kilometraje', limit: '' });
-  const [isSaving, setIsSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState('preventivo');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // KPIs
-  const overdueCount = maintenances.filter(m => m.status === 'overdue').length;
-  const pendingCount = maintenances.filter(m => m.status === 'pending').length;
-  const completedCount = maintenances.filter(m => m.status === 'completed').length;
+  // ESTADOS PARA EL FORMULARIO MODAL
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    deviceId: '',
+    type: 'preventivo',
+    name: '',
+    manualKm: '',   
+    targetKm: '',   
+    intervalKm: '', 
+    cost: '',
+    status: 'Pendiente',
+    expireDate: ''
+  });
 
-  const handleSave = (e) => {
+  // --------------------------------------------------------
+  // LÓGICA DEL GPS (PARA EL ODÓMETRO VIRTUAL)
+  // --------------------------------------------------------
+  const getVehicleKm = (deviceId) => {
+    const device = devices.find(d => String(d.id) === String(deviceId));
+    // Simulación fija para los ejemplos si no hay datos de Traccar
+    const totalMeters = device?.attributes?.totalDistance || (deviceId == 1 ? 2500000 : 0);
+    return Math.round(totalMeters / 1000); // Convertimos metros a Kilómetros
+  };
+
+  // --------------------------------------------------------
+  // BASE DE DATOS (CON PERSISTENCIA EN LOCALSTORAGE)
+  // --------------------------------------------------------
+  // Al cargar la página, buscamos los datos guardados.
+  const [tasks, setTasks] = useState(() => {
+    const savedTasks = localStorage.getItem('fleet_maintenance_tasks');
+    if (savedTasks) {
+      return JSON.parse(savedTasks);
+    }
+    // Si no hay nada guardado, cargamos los ejemplos por defecto
+    return [
+      { 
+        id: 1, deviceId: devices[0]?.id || 1, type: 'preventivo', name: 'Cambio de Aceite (Ejemplo 1)', 
+        manualKm: 5600, targetKm: 6000, intervalKm: 3000, 
+        baseGpsKm: getVehicleKm(devices[0]?.id || 1) 
+      },
+      { 
+        id: 2, deviceId: devices[1]?.id || 2, type: 'preventivo', name: 'Mantenimiento (Ejemplo 2)', 
+        manualKm: 2500, targetKm: 3000, intervalKm: 3000, 
+        baseGpsKm: getVehicleKm(devices[1]?.id || 2) 
+      },
+      { id: 3, deviceId: devices[0]?.id || 1, type: 'documentos', name: 'SOAT', expireDate: '2026-08-10' },
+    ];
+  });
+
+  // Cada vez que 'tasks' cambie (se agregue o elimine uno), lo guardamos automáticamente
+  useEffect(() => {
+    localStorage.setItem('fleet_maintenance_tasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  const getDeviceName = (id) => devices.find(d => String(d.id) === String(id))?.name || 'Vehículo Desconocido';
+
+  // --------------------------------------------------------
+  // MANEJO DEL FORMULARIO
+  // --------------------------------------------------------
+  const handleOpenModal = () => {
+    setFormData({ ...formData, type: activeTab, deviceId: '', manualKm: '', targetKm: '', intervalKm: '', name: '' });
+    setIsModalOpen(true);
+  };
+
+  const handleSaveTask = (e) => {
     e.preventDefault();
-    setIsSaving(true);
     
-    // Aquí iría el fetch a tu base de datos o API de Traccar (/api/maintenance)
-    setTimeout(() => {
-      const newMaintenance = {
-        id: Date.now(),
-        ...formData,
-        status: 'pending',
-        date: new Date().toISOString().split('T')[0]
-      };
-      setMaintenances([newMaintenance, ...maintenances]);
-      setFormData({ deviceId: '', type: 'Cambio de Aceite', metric: 'Kilometraje', limit: '' });
-      setIsSaving(false);
-    }, 500);
+    let newTask = {
+      id: Date.now(),
+      deviceId: formData.deviceId,
+      type: formData.type,
+      name: formData.name
+    };
+
+    if (formData.type === 'preventivo') {
+      newTask.manualKm = Number(formData.manualKm);
+      newTask.targetKm = Number(formData.targetKm);
+      newTask.intervalKm = Number(formData.intervalKm);
+      newTask.baseGpsKm = getVehicleKm(formData.deviceId); // Toma la foto del GPS al guardar
+    } else if (formData.type === 'correctivo') {
+      newTask.cost = Number(formData.cost) || 0;
+      newTask.status = formData.status;
+      newTask.date = new Date().toISOString().split('T')[0];
+    } else if (formData.type === 'documentos') {
+      newTask.expireDate = formData.expireDate;
+    }
+
+    setTasks([...tasks, newTask]);
+    setIsModalOpen(false);
+    setFormData({ deviceId: '', type: 'preventivo', name: '', manualKm: '', targetKm: '', intervalKm: '', cost: '', status: 'Pendiente', expireDate: '' });
   };
 
-  const handleComplete = (id) => {
-    if(!window.confirm("¿Marcar este mantenimiento como completado?")) return;
-    setMaintenances(maintenances.map(m => m.id === id ? { ...m, status: 'completed' } : m));
+  const handleDeleteTask = (id) => {
+    if(window.confirm("¿Estás seguro de eliminar este registro?")) {
+      setTasks(tasks.filter(t => t.id !== id));
+    }
   };
 
-  const handleDelete = (id) => {
-    if(!window.confirm("¿Eliminar este registro de mantenimiento?")) return;
-    setMaintenances(maintenances.filter(m => m.id !== id));
+  // --------------------------------------------------------
+  // LÓGICA DE ALERTAS E INTELIGENCIA
+  // --------------------------------------------------------
+  const evaluateTask = (task) => {
+    if (task.type === 'preventivo') {
+      // 1. Calculamos cuántos Km ha recorrido el GPS desde que se creó el registro
+      const currentGpsKm = getVehicleKm(task.deviceId);
+      const distanceTraveledSinceCreation = Math.max(0, currentGpsKm - task.baseGpsKm);
+      
+      // 2. Odómetro en Vivo = Lo que marcaba el tablero + Lo que ha viajado hoy
+      const liveOdometer = task.manualKm + distanceTraveledSinceCreation;
+      
+      // 3. ¿Cuánto falta para la meta?
+      const remainingKm = task.targetKm - liveOdometer;
+      
+      // 4. Progreso para la barra visual
+      const startOfInterval = task.targetKm - task.intervalKm;
+      let progress = 0;
+      if (task.intervalKm > 0) {
+        progress = Math.min(100, Math.max(0, ((liveOdometer - startOfInterval) / task.intervalKm) * 100));
+      }
+      
+      let status = 'ok'; // Verde
+      if (remainingKm <= 0) status = 'danger'; // Rojo (Vencido)
+      else if (remainingKm <= 500) status = 'warning'; // Amarillo (Próximo a vencer a 500km)
+
+      return { liveOdometer, remainingKm, progress, status };
+    } 
+    
+    if (task.type === 'documentos') {
+      const today = new Date();
+      const expDate = new Date(task.expireDate);
+      const diffTime = expDate - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      let status = 'ok';
+      if (diffDays < 0) status = 'danger'; 
+      else if (diffDays <= 15) status = 'warning'; 
+
+      return { diffDays, status };
+    }
+
+    if (task.type === 'correctivo') {
+      return { status: task.status === 'Pendiente' ? 'danger' : task.status === 'En Taller' ? 'warning' : 'ok' };
+    }
   };
 
-  const getDeviceName = (id) => devices.find(d => String(d.id) === String(id))?.name || 'Desconocido';
+  const filteredTasks = useMemo(() => {
+    return tasks
+      .filter(t => t.type === activeTab)
+      .filter(t => getDeviceName(t.deviceId).toLowerCase().includes(searchTerm.toLowerCase()) || t.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      .map(t => ({ ...t, evaluation: evaluateTask(t) }))
+      .sort((a, b) => {
+        const priority = { 'danger': 1, 'warning': 2, 'ok': 3 };
+        return priority[a.evaluation.status] - priority[b.evaluation.status];
+      });
+  }, [tasks, activeTab, searchTerm, devices]);
 
-  const filteredMaintenances = maintenances.filter(m => 
-    getDeviceName(m.deviceId).toLowerCase().includes(searchTerm.toLowerCase()) ||
-    m.type.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const kpis = {
+    danger: filteredTasks.filter(t => t.evaluation.status === 'danger').length,
+    warning: filteredTasks.filter(t => t.evaluation.status === 'warning').length,
+    ok: filteredTasks.filter(t => t.evaluation.status === 'ok').length,
+  };
 
   return (
-    <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto', backgroundColor: '#0B1120'}}>
-      <style>{`
-        .maint-layout { display: flex; gap: 20px; align-items: flex-start; }
-        .maint-form-panel { flex: 1; min-width: 300px; max-width: 400px; }
-        .maint-list-panel { flex: 2; min-width: 0; }
-        
-        .kpi-container { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
-        .kpi-card { flex: 1; min-width: 150px; background-color: #111827; border: 1px solid #1F2937; border-radius: 12px; padding: 15px; display: flex; align-items: center; gap: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .kpi-icon { width: 45px; height: 45px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 20px; }
-        
-        .badge { padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; display: inline-block; }
-        .badge-overdue { background-color: rgba(239, 68, 68, 0.15); color: #EF4444; border: 1px solid rgba(239, 68, 68, 0.3); }
-        .badge-pending { background-color: rgba(245, 158, 11, 0.15); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.3); }
-        .badge-completed { background-color: rgba(16, 185, 129, 0.15); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.3); }
-
-        @media (max-width: 768px) {
-          .maint-layout { flex-direction: column; }
-          .maint-form-panel, .maint-list-panel { width: 100%; max-width: 100%; }
-          .kpi-card { min-width: 100%; }
-          main { padding: 15px 10px !important; }
-        }
-      `}</style>
-
-      <h2 style={{color:'white', margin:'0 0 20px 0'}}>Gestión de Mantenimientos 🛠️</h2>
-
-      {/* TARJETAS KPI */}
-      <div className="kpi-container">
-        <div className="kpi-card">
-          <div className="kpi-icon" style={{backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444'}}>🚨</div>
-          <div>
-            <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>VENCIDOS</div>
-            <div style={{color: 'white', fontSize: '24px', fontWeight: '900'}}>{overdueCount}</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon" style={{backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#F59E0B'}}>⚠️</div>
-          <div>
-            <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>PROGRAMADOS</div>
-            <div style={{color: 'white', fontSize: '24px', fontWeight: '900'}}>{pendingCount}</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon" style={{backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#10B981'}}>✅</div>
-          <div>
-            <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>COMPLETADOS</div>
-            <div style={{color: 'white', fontSize: '24px', fontWeight: '900'}}>{completedCount}</div>
-          </div>
+    <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto', backgroundColor: '#0B1120', position: 'relative'}}>
+      
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '20px' }}>
+        <h2 style={{color:'white', margin: 0}}>Centro de Mantenimiento 🔧</h2>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: 1, justifyContent: 'flex-end' }}>
+          <input 
+            type="text" 
+            placeholder="🔍 Buscar placa o registro..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', padding: '10px 15px', color: 'white', width: '100%', maxWidth: '250px', outline: 'none' }}
+          />
+          <button onClick={handleOpenModal} style={{ backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)' }}>
+            ➕ Añadir Registro
+          </button>
         </div>
       </div>
 
-      <div className="maint-layout">
-        
-        {/* PANEL IZQUIERDO: FORMULARIO */}
-        <div className="maint-form-panel" style={styles.adminCard}>
-          <h3 style={styles.cardTitle}>Programar Servicio</h3>
-          <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '15px'}}>
-            
-            <div>
-              <label style={styles.label}>Vehículo</label>
-              <select required value={formData.deviceId} onChange={e => setFormData({...formData, deviceId: e.target.value})} style={styles.input}>
-                <option value="" disabled>-- Seleccionar Vehículo --</option>
-                {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '5px' }}>
+        <button onClick={() => setActiveTab('preventivo')} style={activeTab === 'preventivo' ? styles.tabActive : styles.tabInactive}>⚙️ Preventivo (Tablero)</button>
+        <button onClick={() => setActiveTab('correctivo')} style={activeTab === 'correctivo' ? styles.tabActive : styles.tabInactive}>🚨 Correctivo (Fallas)</button>
+        <button onClick={() => setActiveTab('documentos')} style={activeTab === 'documentos' ? styles.tabActive : styles.tabInactive}>📄 Documentos (Fechas)</button>
+      </div>
 
-            <div>
-              <label style={styles.label}>Tipo de Servicio</label>
-              <select required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} style={styles.input}>
-                <option value="Cambio de Aceite">🛢️ Cambio de Aceite</option>
-                <option value="Frenos y Balatas">⚙️ Frenos y Balatas</option>
-                <option value="Rotación de Llantas">🛞 Rotación de Llantas</option>
-                <option value="Renovación SOAT">📄 Renovación Seguro / SOAT</option>
-                <option value="Revisión Tecnomecánica">🔧 Revisión Tecnomecánica</option>
-                <option value="Mantenimiento General">🛠️ Mantenimiento General</option>
-              </select>
-            </div>
-
-            <div>
-              <label style={styles.label}>Basado en (Métrica)</label>
-              <select required value={formData.metric} onChange={e => setFormData({...formData, metric: e.target.value})} style={styles.input}>
-                <option value="Kilometraje">📏 Kilometraje (Km)</option>
-                <option value="Fecha">📅 Fecha Límite</option>
-                <option value="Horas de Motor">⏱️ Horas de Motor</option>
-              </select>
-            </div>
-
-            <div>
-              <label style={styles.label}>
-                {formData.metric === 'Fecha' ? 'Fecha de Vencimiento' : `Valor Límite (${formData.metric})`}
-              </label>
-              <input 
-                required 
-                type={formData.metric === 'Fecha' ? 'date' : 'number'} 
-                value={formData.limit} 
-                onChange={e => setFormData({...formData, limit: e.target.value})} 
-                style={styles.input} 
-                placeholder={formData.metric === 'Kilometraje' ? 'Ej. 50000' : ''}
-              />
-            </div>
-
-            <button type="submit" disabled={isSaving || !formData.deviceId} style={{...styles.btn, backgroundColor: '#2563EB', marginTop: '10px'}}>
-              {isSaving ? 'Guardando...' : '➕ Programar Mantenimiento'}
-            </button>
-          </form>
+      <div style={{ display: 'flex', gap: '15px', marginBottom: '25px', flexWrap: 'wrap' }}>
+        <div style={{...styles.kpiCard, borderLeft: '4px solid #EF4444'}}>
+          <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>CRÍTICOS / VENCIDOS</div>
+          <div style={{color: '#EF4444', fontSize: '24px', fontWeight: '900'}}>{kpis.danger}</div>
         </div>
+        <div style={{...styles.kpiCard, borderLeft: '4px solid #F59E0B'}}>
+          <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>PRÓXIMOS A VENCER</div>
+          <div style={{color: '#F59E0B', fontSize: '24px', fontWeight: '900'}}>{kpis.warning}</div>
+        </div>
+        <div style={{...styles.kpiCard, borderLeft: '4px solid #10B981'}}>
+          <div style={{color: '#9CA3AF', fontSize: '12px', fontWeight: 'bold'}}>AL DÍA / COMPLETADOS</div>
+          <div style={{color: '#10B981', fontSize: '24px', fontWeight: '900'}}>{kpis.ok}</div>
+        </div>
+      </div>
 
-        {/* PANEL DERECHO: LISTA / TABLA */}
-        <div className="maint-list-panel" style={styles.adminCard}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px'}}>
-            <h3 style={{...styles.cardTitle, borderBottom: 'none', margin: 0, padding: 0}}>Historial e Inventario</h3>
-            <input 
-              type="text" 
-              placeholder="🔍 Buscar placa o servicio..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{...styles.input, width: '100%', maxWidth: '250px'}}
-            />
-          </div>
+      {/* TABLA PRINCIPAL */}
+      <div style={{ backgroundColor: '#111827', borderRadius: '12px', border: '1px solid #1F2937', overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '800px' }}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Vehículo</th>
+                <th style={styles.th}>{activeTab === 'documentos' ? 'Documento Legal' : 'Tarea / Descripción'}</th>
+                
+                {/* COLUMNAS PREVENTIVAS */}
+                {activeTab === 'preventivo' && <th style={styles.th}>Km Actual (Tablero)</th>}
+                {activeTab === 'preventivo' && <th style={styles.th}>Intervalo</th>}
+                {activeTab === 'preventivo' && <th style={styles.th}>Próximo Cambio</th>}
+                {activeTab === 'preventivo' && <th style={styles.th}>Estado / Faltante</th>}
 
-          <div style={{overflowX: 'auto'}}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Vehículo</th>
-                  <th style={styles.th}>Servicio</th>
-                  <th style={styles.th}>Alerta Base</th>
-                  <th style={styles.th}>Límite</th>
-                  <th style={styles.th}>Estado</th>
-                  <th style={styles.th}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredMaintenances.length === 0 ? (
-                  <tr><td colSpan="6" style={{padding: '20px', textAlign: 'center', color: '#6B7280'}}>No hay mantenimientos registrados.</td></tr>
-                ) : (
-                  filteredMaintenances.map(m => (
-                    <tr key={m.id} style={styles.tr}>
-                      <td style={{...styles.td, fontWeight: 'bold', color: 'white'}}>{getDeviceName(m.deviceId)}</td>
-                      <td style={styles.td}>{m.type}</td>
-                      <td style={styles.td}>{m.metric}</td>
-                      <td style={{...styles.td, color: '#60A5FA', fontWeight: 'bold'}}>
-                        {m.metric === 'Kilometraje' ? `${m.limit} km` : m.metric === 'Horas de Motor' ? `${m.limit} hrs` : m.limit}
-                      </td>
+                {/* COLUMNAS CORRECTIVAS */}
+                {activeTab === 'correctivo' && <th style={styles.th}>Fecha de Falla</th>}
+                {activeTab === 'correctivo' && <th style={styles.th}>Costo Estimado</th>}
+                {activeTab === 'correctivo' && <th style={styles.th}>Gravedad</th>}
+
+                {/* COLUMNAS DOCUMENTOS */}
+                {activeTab === 'documentos' && <th style={styles.th}>Fecha Vencimiento</th>}
+                {activeTab === 'documentos' && <th style={styles.th}>Días Restantes</th>}
+                {activeTab === 'documentos' && <th style={styles.th}>Gravedad</th>}
+
+                <th style={styles.th}>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTasks.length === 0 ? (
+                <tr><td colSpan="8" style={{padding: '30px', textAlign: 'center', color: '#6B7280'}}>No hay registros para mostrar en esta categoría.</td></tr>
+              ) : (
+                filteredTasks.map(task => (
+                  <tr key={task.id} style={{ borderBottom: '1px solid #1F2937', transition: 'background-color 0.2s' }}>
+                    <td style={{...styles.td, fontWeight: 'bold', color: 'white'}}>{getDeviceName(task.deviceId)}</td>
+                    <td style={{...styles.td, color: '#D1D5DB'}}>{task.name}</td>
+                    
+                    {/* RENDER PREVENTIVO */}
+                    {activeTab === 'preventivo' && <td style={{...styles.td, color: '#60A5FA', fontWeight: 'bold'}}>{task.evaluation.liveOdometer.toLocaleString()} Km</td>}
+                    {activeTab === 'preventivo' && <td style={{...styles.td, color: '#9CA3AF'}}>{task.intervalKm.toLocaleString()} Km</td>}
+                    {activeTab === 'preventivo' && <td style={{...styles.td, fontWeight: 'bold', color: 'white'}}>{task.targetKm.toLocaleString()} Km</td>}
+                    {activeTab === 'preventivo' && (
                       <td style={styles.td}>
-                        <span className={`badge badge-${m.status}`}>
-                          {m.status === 'overdue' ? 'VENCIDO' : m.status === 'pending' ? 'PENDIENTE' : 'COMPLETADO'}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: task.evaluation.remainingKm <= 0 ? '#EF4444' : '#10B981' }}>
+                            {task.evaluation.remainingKm <= 0 ? `Vencido por ${Math.abs(task.evaluation.remainingKm).toLocaleString()} Km` : `Faltan ${task.evaluation.remainingKm.toLocaleString()} Km`}
+                          </span>
+                          <div style={{ width: '120px', backgroundColor: '#374151', height: '6px', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ width: `${task.evaluation.progress}%`, height: '100%', backgroundColor: task.evaluation.status === 'danger' ? '#EF4444' : task.evaluation.status === 'warning' ? '#F59E0B' : '#10B981', transition: 'width 0.5s ease-in-out' }}></div>
+                          </div>
+                        </div>
+                      </td>
+                    )}
+
+                    {/* RENDER CORRECTIVO */}
+                    {activeTab === 'correctivo' && <td style={{...styles.td, color: '#9CA3AF'}}>{task.date}</td>}
+                    {activeTab === 'correctivo' && <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>${task.cost.toLocaleString()}</td>}
+                    
+                    {/* RENDER DOCUMENTOS */}
+                    {activeTab === 'documentos' && <td style={{...styles.td, color: '#D1D5DB'}}>{task.expireDate}</td>}
+                    {activeTab === 'documentos' && (
+                      <td style={{...styles.td, fontWeight: 'bold', color: task.evaluation.diffDays < 0 ? '#EF4444' : '#60A5FA'}}>
+                        {task.evaluation.diffDays < 0 ? `Vencido hace ${Math.abs(task.evaluation.diffDays)} días` : `Faltan ${task.evaluation.diffDays} días`}
+                      </td>
+                    )}
+
+                    {/* ESTADO GLOBAL Y ACCIONES */}
+                    {activeTab !== 'preventivo' && (
+                      <td style={styles.td}>
+                        <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', backgroundColor: task.evaluation.status === 'danger' ? 'rgba(239,68,68,0.1)' : task.evaluation.status === 'warning' ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', color: task.evaluation.status === 'danger' ? '#EF4444' : task.evaluation.status === 'warning' ? '#F59E0B' : '#10B981', border: `1px solid ${task.evaluation.status === 'danger' ? 'rgba(239,68,68,0.3)' : task.evaluation.status === 'warning' ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
+                          {task.evaluation.status === 'danger' ? 'CRÍTICO' : task.evaluation.status === 'warning' ? 'ATENCIÓN' : 'AL DÍA'}
                         </span>
                       </td>
-                      <td style={styles.td}>
-                        {m.status !== 'completed' && (
-                          <button onClick={() => handleComplete(m.id)} title="Marcar Realizado" style={styles.actionBtnSuccess}>✔️</button>
-                        )}
-                        <button onClick={() => handleDelete(m.id)} title="Eliminar Registro" style={styles.actionBtnDelete}>🗑️</button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                    )}
+                    <td style={styles.td}>
+                      <button onClick={() => handleDeleteTask(task.id)} style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }} title="Eliminar Registro">🗑️</button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MODAL PARA AGREGAR NUEVOS MANTENIMIENTOS Y DOCUMENTOS */}
+      {isModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, backdropFilter: 'blur(4px)', padding: '20px' }}>
+          <div style={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '12px', width: '100%', maxWidth: '450px', padding: '25px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', overflowY: 'auto', maxHeight: '90vh' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ color: 'white', margin: 0 }}>Crear Nuevo Registro</h3>
+              <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '18px' }}>✕</button>
+            </div>
+
+            <form onSubmit={handleSaveTask} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              
+              <div>
+                <label style={styles.label}>Categoría</label>
+                <select value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} style={styles.input} required>
+                  <option value="preventivo">⚙️ Mantenimiento Preventivo (Km)</option>
+                  <option value="correctivo">🚨 Mantenimiento Correctivo (Falla)</option>
+                  <option value="documentos">📄 Documento o Seguro (Fecha)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={styles.label}>Vehículo Afectado</label>
+                <select value={formData.deviceId} onChange={e => setFormData({...formData, deviceId: e.target.value})} style={styles.input} required>
+                  <option value="" disabled>-- Seleccione un Vehículo --</option>
+                  {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+
+              {/* CAMPO DINÁMICO: DESCRIPCIÓN vs DROPDOWN DE DOCUMENTOS */}
+              {formData.type === 'documentos' ? (
+                <div>
+                  <label style={styles.label}>Documento a Vencer</label>
+                  <select value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} required>
+                    <option value="" disabled>-- Seleccione el Documento --</option>
+                    <option value="SOAT">SOAT</option>
+                    <option value="Revisión Tecnomecánica">Revisión Tecnomecánica</option>
+                    <option value="Seguro Todo Riesgo">Seguro Todo Riesgo</option>
+                    <option value="Pólizas Extra y Contra">Pólizas Extra y Contra</option>
+                    <option value="Tarjeta de Operación">Tarjeta de Operación</option>
+                    <option value="Otro">Otro Documento...</option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label style={styles.label}>Descripción de la Tarea</label>
+                  <input type="text" placeholder="Ej. Cambio de Aceite, Frenos..." value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} required />
+                </div>
+              )}
+
+              {/* CAMPOS PREVENTIVO EXACTOS */}
+              {formData.type === 'preventivo' && (
+                <>
+                  <div>
+                    <label style={styles.label}>Odómetro Actual del Tablero (Km)</label>
+                    <input type="number" placeholder="Ej. 2500" value={formData.manualKm} onChange={e => setFormData({...formData, manualKm: e.target.value})} style={styles.input} required />
+                  </div>
+                  <div>
+                    <label style={styles.label}>Próximo Mantenimiento a los (Km)</label>
+                    <input type="number" placeholder="Ej. 3000" value={formData.targetKm} onChange={e => setFormData({...formData, targetKm: e.target.value})} style={styles.input} required />
+                  </div>
+                  <div>
+                    <label style={styles.label}>Intervalo (Se repite cada...)</label>
+                    <input type="number" placeholder="Ej. 3000" value={formData.intervalKm} onChange={e => setFormData({...formData, intervalKm: e.target.value})} style={styles.input} required />
+                  </div>
+                </>
+              )}
+
+              {/* CAMPOS CORRECTIVO */}
+              {formData.type === 'correctivo' && (
+                <>
+                  <div>
+                    <label style={styles.label}>Estado Actual</label>
+                    <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} style={styles.input}>
+                      <option value="Pendiente">🔴 Pendiente de Revisión</option>
+                      <option value="En Taller">🟡 En Taller Mecánico</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.label}>Costo Estimado ($)</label>
+                    <input type="number" placeholder="Ej. 150000" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} style={styles.input} />
+                  </div>
+                </>
+              )}
+
+              {/* CAMPOS DOCUMENTOS */}
+              {formData.type === 'documentos' && (
+                <div>
+                  <label style={styles.label}>Fecha de Vencimiento Legal</label>
+                  <input type="date" value={formData.expireDate} onChange={e => setFormData({...formData, expireDate: e.target.value})} style={styles.input} required />
+                </div>
+              )}
+
+              <button type="submit" style={{ backgroundColor: '#10B981', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
+                Guardar Registro
+              </button>
+            </form>
           </div>
         </div>
-
-      </div>
+      )}
     </main>
   );
 }
 
 const styles = {
-  adminCard: { backgroundColor: '#111827', padding: '20px', borderRadius: '12px', border: '1px solid #1F2937' },
-  cardTitle: { color: 'white', fontSize: '15px', margin: '0 0 20px 0', borderBottom: '1px solid #1F2937', paddingBottom: '10px' },
+  kpiCard: { flex: 1, minWidth: '180px', backgroundColor: '#111827', borderRadius: '8px', padding: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.2)' },
+  tabInactive: { flex: 1, minWidth: '150px', padding: '12px 20px', backgroundColor: '#111827', color: '#9CA3AF', border: '1px solid #1F2937', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', transition: 'all 0.2s', whiteSpace: 'nowrap' },
+  tabActive: { flex: 1, minWidth: '150px', padding: '12px 20px', backgroundColor: '#2563EB', color: 'white', border: '1px solid #2563EB', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', transition: 'all 0.2s', boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)', whiteSpace: 'nowrap' },
+  th: { padding: '15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '12px', color: '#9CA3AF', whiteSpace: 'nowrap', textTransform: 'uppercase' },
+  td: { padding: '15px', fontSize: '13px' },
   label: { color:'#9CA3AF', fontSize:'12px', fontWeight: 'bold', display: 'block', marginBottom: '6px' },
-  input: { backgroundColor: '#0B1120', border: '1px solid #374151', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', outline: 'none', boxSizing: 'border-box', colorScheme: 'dark' },
-  btn: { color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'transform 0.1s' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' },
-  th: { padding: '12px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '12px', color: '#9CA3AF', whiteSpace: 'nowrap' },
-  tr: { borderBottom: '1px solid #1F2937', transition: 'background-color 0.2s' },
-  td: { padding: '12px', fontSize: '13px', color: '#D1D5DB' },
-  actionBtnSuccess: { background: 'rgba(16, 185, 129, 0.1)', border: '1px solid #10B981', color: '#10B981', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', marginRight: '5px' },
-  actionBtnDelete: { background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer' }
+  input: { backgroundColor: '#0B1120', border: '1px solid #374151', borderRadius: '6px', padding: '10px', color: 'white', width: '100%', outline: 'none', boxSizing: 'border-box', colorScheme: 'dark' }
 };
