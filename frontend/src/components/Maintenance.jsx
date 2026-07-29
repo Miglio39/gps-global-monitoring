@@ -1,6 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 
-export default function Maintenance({ devices, token }) {
+export default function Maintenance({ devices, positions, token }) {
+  // 1. DETECTOR DE PANTALLA MÓVIL
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [activeTab, setActiveTab] = useState('preventivo');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -19,44 +27,35 @@ export default function Maintenance({ devices, token }) {
   });
 
   // --------------------------------------------------------
-  // LÓGICA DEL GPS (PARA EL ODÓMETRO VIRTUAL)
+  // LÓGICA DEL GPS EN TIEMPO REAL (CONECTADO A POSITIONS)
   // --------------------------------------------------------
-  const getVehicleKm = (deviceId) => {
+  const getVehicleGpsMeters = (deviceId) => {
+    // Busca primero en las posiciones en VIVO
+    const pos = positions && positions[deviceId];
+    if (pos?.attributes?.totalDistance !== undefined) {
+      return pos.attributes.totalDistance;
+    }
+    // Si no está en vivo, usa el último guardado en el dispositivo
     const device = devices.find(d => String(d.id) === String(deviceId));
-    // Simulación fija para los ejemplos si no hay datos de Traccar
-    const totalMeters = device?.attributes?.totalDistance || (deviceId == 1 ? 2500000 : 0);
-    return Math.round(totalMeters / 1000); // Convertimos metros a Kilómetros
+    return device?.attributes?.totalDistance || 0; 
   };
 
   // --------------------------------------------------------
   // BASE DE DATOS (CON PERSISTENCIA EN LOCALSTORAGE)
   // --------------------------------------------------------
-  // Al cargar la página, buscamos los datos guardados.
   const [tasks, setTasks] = useState(() => {
     const savedTasks = localStorage.getItem('fleet_maintenance_tasks');
-    if (savedTasks) {
-      return JSON.parse(savedTasks);
-    }
-    // Si no hay nada guardado, cargamos los ejemplos por defecto
-    return [
-      { 
-        id: 1, deviceId: devices[0]?.id || 1, type: 'preventivo', name: 'Cambio de Aceite (Ejemplo 1)', 
-        manualKm: 5600, targetKm: 6000, intervalKm: 3000, 
-        baseGpsKm: getVehicleKm(devices[0]?.id || 1) 
-      },
-      { 
-        id: 2, deviceId: devices[1]?.id || 2, type: 'preventivo', name: 'Mantenimiento (Ejemplo 2)', 
-        manualKm: 2500, targetKm: 3000, intervalKm: 3000, 
-        baseGpsKm: getVehicleKm(devices[1]?.id || 2) 
-      },
-      { id: 3, deviceId: devices[0]?.id || 1, type: 'documentos', name: 'SOAT', expireDate: '2026-08-10' },
-    ];
+    return savedTasks ? JSON.parse(savedTasks) : [];
   });
 
-  // Cada vez que 'tasks' cambie (se agregue o elimine uno), lo guardamos automáticamente
   useEffect(() => {
     localStorage.setItem('fleet_maintenance_tasks', JSON.stringify(tasks));
   }, [tasks]);
+
+  // 2. FILTRO DE PRIVACIDAD: ¡Solo mostrar tareas de los vehículos asignados a este usuario!
+  const myUserTasks = useMemo(() => {
+    return tasks.filter(task => devices.some(d => String(d.id) === String(task.deviceId)));
+  }, [tasks, devices]);
 
   const getDeviceName = (id) => devices.find(d => String(d.id) === String(id))?.name || 'Vehículo Desconocido';
 
@@ -70,7 +69,6 @@ export default function Maintenance({ devices, token }) {
 
   const handleSaveTask = (e) => {
     e.preventDefault();
-    
     let newTask = {
       id: Date.now(),
       deviceId: formData.deviceId,
@@ -82,7 +80,7 @@ export default function Maintenance({ devices, token }) {
       newTask.manualKm = Number(formData.manualKm);
       newTask.targetKm = Number(formData.targetKm);
       newTask.intervalKm = Number(formData.intervalKm);
-      newTask.baseGpsKm = getVehicleKm(formData.deviceId); // Toma la foto del GPS al guardar
+      newTask.baseGpsMeters = getVehicleGpsMeters(formData.deviceId); // Toma foto en vivo
     } else if (formData.type === 'correctivo') {
       newTask.cost = Number(formData.cost) || 0;
       newTask.status = formData.status;
@@ -93,7 +91,6 @@ export default function Maintenance({ devices, token }) {
 
     setTasks([...tasks, newTask]);
     setIsModalOpen(false);
-    setFormData({ deviceId: '', type: 'preventivo', name: '', manualKm: '', targetKm: '', intervalKm: '', cost: '', status: 'Pendiente', expireDate: '' });
   };
 
   const handleDeleteTask = (id) => {
@@ -103,30 +100,26 @@ export default function Maintenance({ devices, token }) {
   };
 
   // --------------------------------------------------------
-  // LÓGICA DE ALERTAS E INTELIGENCIA
+  // LÓGICA DE ALERTAS E INTELIGENCIA (SINCRONIZACIÓN EN VIVO)
   // --------------------------------------------------------
   const evaluateTask = (task) => {
     if (task.type === 'preventivo') {
-      // 1. Calculamos cuántos Km ha recorrido el GPS desde que se creó el registro
-      const currentGpsKm = getVehicleKm(task.deviceId);
-      const distanceTraveledSinceCreation = Math.max(0, currentGpsKm - task.baseGpsKm);
+      const currentGpsMeters = getVehicleGpsMeters(task.deviceId);
+      const metersTraveledSinceCreation = Math.max(0, currentGpsMeters - task.baseGpsMeters);
+      const kmTraveledSinceCreation = Math.round(metersTraveledSinceCreation / 1000);
       
-      // 2. Odómetro en Vivo = Lo que marcaba el tablero + Lo que ha viajado hoy
-      const liveOdometer = task.manualKm + distanceTraveledSinceCreation;
-      
-      // 3. ¿Cuánto falta para la meta?
+      const liveOdometer = task.manualKm + kmTraveledSinceCreation;
       const remainingKm = task.targetKm - liveOdometer;
       
-      // 4. Progreso para la barra visual
       const startOfInterval = task.targetKm - task.intervalKm;
       let progress = 0;
       if (task.intervalKm > 0) {
         progress = Math.min(100, Math.max(0, ((liveOdometer - startOfInterval) / task.intervalKm) * 100));
       }
       
-      let status = 'ok'; // Verde
-      if (remainingKm <= 0) status = 'danger'; // Rojo (Vencido)
-      else if (remainingKm <= 500) status = 'warning'; // Amarillo (Próximo a vencer a 500km)
+      let status = 'ok'; 
+      if (remainingKm <= 0) status = 'danger'; 
+      else if (remainingKm <= 500) status = 'warning'; 
 
       return { liveOdometer, remainingKm, progress, status };
     } 
@@ -149,8 +142,9 @@ export default function Maintenance({ devices, token }) {
     }
   };
 
+  // 3. LA TABLA AHORA SE ACTUALIZA CON CADA MOVIMIENTO (Depende de 'positions')
   const filteredTasks = useMemo(() => {
-    return tasks
+    return myUserTasks
       .filter(t => t.type === activeTab)
       .filter(t => getDeviceName(t.deviceId).toLowerCase().includes(searchTerm.toLowerCase()) || t.name.toLowerCase().includes(searchTerm.toLowerCase()))
       .map(t => ({ ...t, evaluation: evaluateTask(t) }))
@@ -158,7 +152,7 @@ export default function Maintenance({ devices, token }) {
         const priority = { 'danger': 1, 'warning': 2, 'ok': 3 };
         return priority[a.evaluation.status] - priority[b.evaluation.status];
       });
-  }, [tasks, activeTab, searchTerm, devices]);
+  }, [myUserTasks, activeTab, searchTerm, devices, positions]);
 
   const kpis = {
     danger: filteredTasks.filter(t => t.evaluation.status === 'danger').length,
@@ -166,6 +160,23 @@ export default function Maintenance({ devices, token }) {
     ok: filteredTasks.filter(t => t.evaluation.status === 'ok').length,
   };
 
+  // VISTA ALTERNATIVA SI ES MÓVIL
+  if (isMobile) {
+    return (
+      <main style={{flex: 1, padding: '20px', backgroundColor: '#0B1120', display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
+         <div style={{textAlign: 'center', color: 'white', padding: '30px', backgroundColor: '#111827', borderRadius: '12px', border: '1px solid #374151', maxWidth: '90%'}}>
+           <div style={{fontSize: '50px', marginBottom: '15px'}}>🚫📱</div>
+           <h3 style={{margin: '0 0 10px 0'}}>Módulo de Escritorio</h3>
+           <p style={{color: '#9CA3AF', fontSize: '13px', margin: 0, lineHeight: '1.5'}}>
+             El panel de Mantenimientos contiene tablas detalladas y herramientas de gestión que requieren una pantalla más grande.<br/><br/>
+             <b>Por favor, ingresa desde una computadora o tablet.</b>
+           </p>
+         </div>
+      </main>
+    );
+  }
+
+  // VISTA NORMAL DE ESCRITORIO
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto', backgroundColor: '#0B1120', position: 'relative'}}>
       
@@ -186,7 +197,7 @@ export default function Maintenance({ devices, token }) {
       </div>
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '5px' }}>
-        <button onClick={() => setActiveTab('preventivo')} style={activeTab === 'preventivo' ? styles.tabActive : styles.tabInactive}>⚙️ Preventivo (Tablero)</button>
+        <button onClick={() => setActiveTab('preventivo')} style={activeTab === 'preventivo' ? styles.tabActive : styles.tabInactive}>⚙️ Preventivo (Tablero + GPS)</button>
         <button onClick={() => setActiveTab('correctivo')} style={activeTab === 'correctivo' ? styles.tabActive : styles.tabInactive}>🚨 Correctivo (Fallas)</button>
         <button onClick={() => setActiveTab('documentos')} style={activeTab === 'documentos' ? styles.tabActive : styles.tabInactive}>📄 Documentos (Fechas)</button>
       </div>
@@ -216,7 +227,7 @@ export default function Maintenance({ devices, token }) {
                 <th style={styles.th}>{activeTab === 'documentos' ? 'Documento Legal' : 'Tarea / Descripción'}</th>
                 
                 {/* COLUMNAS PREVENTIVAS */}
-                {activeTab === 'preventivo' && <th style={styles.th}>Km Actual (Tablero)</th>}
+                {activeTab === 'preventivo' && <th style={styles.th}>Km Actual (En Vivo)</th>}
                 {activeTab === 'preventivo' && <th style={styles.th}>Intervalo</th>}
                 {activeTab === 'preventivo' && <th style={styles.th}>Próximo Cambio</th>}
                 {activeTab === 'preventivo' && <th style={styles.th}>Estado / Faltante</th>}
@@ -236,7 +247,7 @@ export default function Maintenance({ devices, token }) {
             </thead>
             <tbody>
               {filteredTasks.length === 0 ? (
-                <tr><td colSpan="8" style={{padding: '30px', textAlign: 'center', color: '#6B7280'}}>No hay registros para mostrar en esta categoría.</td></tr>
+                <tr><td colSpan="8" style={{padding: '30px', textAlign: 'center', color: '#6B7280'}}>No hay registros para mostrar.</td></tr>
               ) : (
                 filteredTasks.map(task => (
                   <tr key={task.id} style={{ borderBottom: '1px solid #1F2937', transition: 'background-color 0.2s' }}>
@@ -320,7 +331,6 @@ export default function Maintenance({ devices, token }) {
                 </select>
               </div>
 
-              {/* CAMPO DINÁMICO: DESCRIPCIÓN vs DROPDOWN DE DOCUMENTOS */}
               {formData.type === 'documentos' ? (
                 <div>
                   <label style={styles.label}>Documento a Vencer</label>
@@ -341,7 +351,6 @@ export default function Maintenance({ devices, token }) {
                 </div>
               )}
 
-              {/* CAMPOS PREVENTIVO EXACTOS */}
               {formData.type === 'preventivo' && (
                 <>
                   <div>
@@ -359,7 +368,6 @@ export default function Maintenance({ devices, token }) {
                 </>
               )}
 
-              {/* CAMPOS CORRECTIVO */}
               {formData.type === 'correctivo' && (
                 <>
                   <div>
@@ -376,7 +384,6 @@ export default function Maintenance({ devices, token }) {
                 </>
               )}
 
-              {/* CAMPOS DOCUMENTOS */}
               {formData.type === 'documentos' && (
                 <div>
                   <label style={styles.label}>Fecha de Vencimiento Legal</label>
