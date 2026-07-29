@@ -119,8 +119,10 @@ export default function Reports({ devices, token }) {
 
         if (resSummary.ok) {
             let summary = await resSummary.json();
+            // Estado -1 inicial para gatillar la animación de "Calculando..." en la celda
             setSummaryData(summary.map(day => ({ ...day, realMaxSpeed: -1 })));
             
+            // Extracción matemática de la velocidad máxima real punto por punto
             fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
                 .then(res => res.ok ? res.json() : [])
                 .then(route => {
@@ -168,6 +170,39 @@ export default function Reports({ devices, token }) {
                 longitude: pos.longitude
             })));
         }
+      }
+      // ---> NUEVO: INFORME DE EXCESO DE VELOCIDAD POR FLOTA COMPLETA <---
+      else if (reportType === 'fleet_speed') {
+        const allEvents = [];
+        const chunkSize = 10; // Procesa 10 vehículos a la vez para no colapsar el servidor Traccar
+
+        for (let i = 0; i < devices.length; i += chunkSize) {
+            const chunk = devices.slice(i, i + chunkSize);
+            const promises = chunk.map(device => {
+                const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
+                return fetch(`${BASE_URL}/api/reports/route?${params}`, { headers })
+                    .then(res => res.ok ? res.json() : [])
+                    .then(route => {
+                        const overspeed = route.filter(pos => (pos.speed * 1.852) > speedLimit);
+                        return overspeed.map(pos => ({
+                            id: pos.id,
+                            deviceName: device.name, // Clave: Guardamos el nombre/placa del vehículo
+                            serverTime: pos.fixTime,
+                            type: 'overspeed',
+                            speed: pos.speed,
+                            latitude: pos.latitude,
+                            longitude: pos.longitude
+                        }));
+                    })
+                    .catch(() => []); // Ignorar vehículos con error
+            });
+            const chunkResults = await Promise.all(promises);
+            allEvents.push(...chunkResults.flat());
+        }
+        
+        // Ordenamos todos los eventos de la flota del más reciente al más antiguo
+        allEvents.sort((a, b) => new Date(b.serverTime) - new Date(a.serverTime));
+        setEventsData(allEvents);
       }
       else if (reportType === 'harsh') {
         const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
@@ -298,22 +333,25 @@ export default function Reports({ devices, token }) {
     setIsFetching(false);
   };
 
-  // EXPORTADOR EXCEL REESTRUCTURADO (TÍTULOS MAYÚSCULAS DINÁMICOS, NEGRITA Y PLACA)
+  // EXPORTADOR EXCEL REESTRUCTURADO (INCLUYE FLOTA)
   const handleDownloadExcel = () => {
     if (isFetching) {
       return alert("Por favor espera a que termine de cargar el informe para exportarlo.");
     }
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
-    const placaVehiculo = selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS";
+    
+    // Título dinámico para la Placa o la Flota
+    const placaVehiculo = reportType === 'fleet_speed' ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
 
-    // SOLUCIÓN: Título de Tipo de Informe dinámico basado en reportType
+    // Título dinámico del Tipo de Reporte
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
     if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO CONSOLIDADO";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
-    else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD";
+    else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
+    else if (reportType === 'fleet_speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (TODA LA FLOTA)";
     else if (reportType === 'harsh') nombreReporteMayus = "INFORME DE ACELERACIONES Y FRENADAS BRUSCAS";
     else if (reportType === 'idle') nombreReporteMayus = "INFORME DE TIEMPOS EN RALENTÍ";
     else if (reportType === 'stops') nombreReporteMayus = "INFORME DE VEHÍCULOS DETENIDOS (PARADAS)";
@@ -399,10 +437,11 @@ export default function Reports({ devices, token }) {
         `;
       });
     }
-    else if (reportType === 'speed' || reportType === 'harsh') {
+    else if (reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') {
       if (eventsData.length === 0) return alert("No hay datos para exportar.");
       htmlTemplate += `
         <tr>
+          ${reportType === 'fleet_speed' ? '<th><b>VEHÍCULO / PLACA</b></th>' : ''}
           <th><b>FECHA Y HORA</b></th>
           <th><b>TIPO DE EVENTO</b></th>
           <th><b>SEVERIDAD</b></th>
@@ -414,13 +453,14 @@ export default function Reports({ devices, token }) {
         let typeText = ev.type.toUpperCase();
         let detail = '';
         
-        if (ev.type === 'overspeed') { typeText = 'EXCESO DE VELOCIDAD'; detail = `${(ev.speed * 1.852).toFixed(1).replace('.', ',')} km/h`; }
+        if (ev.type === 'overspeed') { typeText = 'EXCESO DE VELOCIDAD'; detail = `Registrado: ${(ev.speed * 1.852).toFixed(1).replace('.', ',')} km/h`; }
         else if (ev.type === 'harshAcceleration') { typeText = 'ACELERACIÓN BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
         else if (ev.type === 'harshBraking') { typeText = 'FRENADA BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
         
         const severity = (ev.severity || 'ALERTA').toUpperCase();
         htmlTemplate += `
           <tr>
+            ${reportType === 'fleet_speed' ? `<td><b>${ev.deviceName}</b></td>` : ''}
             <td>${dt}</td>
             <td>${typeText}</td>
             <td>${severity}</td>
@@ -494,11 +534,22 @@ export default function Reports({ devices, token }) {
       <div style={styles.adminCard}>
         <form onSubmit={handleFetchData} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
+          {/* SELECTOR INTELIGENTE: SE DESACTIVA SI ELIGES REPORTE DE FLOTA */}
           <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
-            <select required value={reportConfig.deviceId} onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} style={styles.input}>
-                <option value="">-- Seleccionar --</option>
-                {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            <select 
+              required={reportType !== 'fleet_speed'} 
+              disabled={reportType === 'fleet_speed'}
+              value={reportType === 'fleet_speed' ? 'all' : reportConfig.deviceId} 
+              onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} 
+              style={styles.input}
+            >
+                {reportType === 'fleet_speed' ? (
+                   <option value="all">Toda la Flota</option>
+                ) : (
+                   <option value="">-- Seleccionar --</option>
+                )}
+                {reportType !== 'fleet_speed' && devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
          
@@ -507,14 +558,16 @@ export default function Reports({ devices, token }) {
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <option value="daily">Resumen Diario</option>
                 <option value="route">Detallado Punto a Punto</option>
-                <option value="speed">Exceso de Velocidad</option>
+                <option value="speed">Exceso de Velocidad (Individual)</option>
+                {/* NUEVO REPORTE */}
+                <option value="fleet_speed">Exceso de Velocidad (Toda la Flota)</option>
                 <option value="harsh">Aceleración y Frenada Brusca</option>
                 <option value="idle">Tiempo en Ralentí</option>
                 <option value="stops">Vehículo Detenido (Paradas)</option>
             </select>
           </div>
 
-          {reportType === 'speed' && (
+          {(reportType === 'speed' || reportType === 'fleet_speed') && (
             <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={speedLimit} onChange={e => setSpeedLimit(e.target.value)} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -648,21 +701,23 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3 & 4. TABLAS: EVENTOS */}
-        {(reportType === 'speed' || reportType === 'harsh') && (
+        {/* 3 & 4. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
+        {(reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones / Alertas ({eventsData.length} eventos)</h3>
             <div style={{maxHeight: '500px', overflowY: 'auto'}}>
               <table style={styles.table}>
                 <thead style={{position:'sticky', top:0, backgroundColor:'#111827'}}>
                     <tr style={styles.tableHead}>
+                        {/* COLUMNA EXTRA PARA FLOTA */}
+                        {reportType === 'fleet_speed' && <th>Vehículo / Placa</th>}
                         <th>Fecha y Hora</th>
                         <th>Tipo de Evento</th>
                         <th>Análisis Físico y Detalle</th>
                     </tr>
                 </thead>
                 <tbody>
-                  {eventsData.length === 0 ? <tr><td colSpan="3" style={styles.emptyText}>Excelente conducción. No se encontraron infracciones.</td></tr> :
+                  {eventsData.length === 0 ? <tr><td colSpan={reportType === 'fleet_speed' ? 4 : 3} style={styles.emptyText}>Excelente conducción. No se encontraron infracciones.</td></tr> :
                   eventsData.map((ev, index) => {
                     let typeText = ev.type;
                     let severityColor = '#F3F4F6'; 
@@ -687,6 +742,10 @@ export default function Reports({ devices, token }) {
 
                     return (
                       <tr key={ev.id || index} style={{ borderBottom: '1px solid #1F2937' }}>
+                        {/* DATO EXTRA DE LA PLACA PARA FLOTA */}
+                        {reportType === 'fleet_speed' && (
+                          <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{ev.deviceName}</td>
+                        )}
                         <td style={styles.td}>{new Date(ev.serverTime).toLocaleString()}</td>
                         <td style={{...styles.td, color: severityColor, fontWeight: 'bold'}}>
                            {typeText} 
