@@ -25,6 +25,34 @@ export default function LiveDashboard({ devices, positions }) {
   // ESTADO NUEVO: Dispositivos con la "Alarma de Vigilancia" activada
   const [armedDevices, setArmedDevices] = useState({});
 
+  // === CONFIGURACIÓN DE MAPAS ===
+  const [mapStyle, setMapStyle] = useState('streets'); // Ahora inicia en 'Calles' por defecto
+  const [showLayerMenu, setShowLayerMenu] = useState(false); // Controla si se ve el menú de capas
+
+  const MAP_TILES = {
+    dark: {
+      name: '🌙 Oscuro',
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attribution: '&copy; CartoDB'
+    },
+    googleHybrid: {
+      name: '🌍 Híbrido',
+      url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+      attribution: '&copy; Google Maps'
+    },
+    googleSat: {
+      name: '🛰️ Satélite',
+      url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+      attribution: '&copy; Google Maps'
+    },
+    streets: {
+      name: '🗺️ Calles',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap'
+    }
+  };
+  // ====================================================
+
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 768;
@@ -56,7 +84,7 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-// LÓGICA DE ALARMA CORREGIDA: Ahora también suena si el carro se mueve (velocidad > 0)
+  // LÓGICA DE ALARMA: Suena si el carro se mueve o enciende
   useEffect(() => {
     try {
       const hasNotificationAPI = 'Notification' in window;
@@ -76,7 +104,6 @@ export default function LiveDashboard({ devices, positions }) {
         const pos = positions[deviceId];
         
         if (pos) {
-          // Si el vehículo reporta ignición verdadera o si se está moviendo (>0 km/h)
           const isMoving = pos.speed > 0;
           const physicalIgnition = pos.attributes?.ignition;
           const isEngineOn = isMoving || physicalIgnition;
@@ -118,7 +145,6 @@ export default function LiveDashboard({ devices, positions }) {
       console.error("Error crítico general manejado:", error);
     }
   }, [positions, armedDevices, devices]);
-
 
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online').length;
@@ -239,8 +265,92 @@ export default function LiveDashboard({ devices, positions }) {
       
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
-        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%', zoomControl: false }} ref={setMap}>
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          
+        
+        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA (ESTILO ICONO DESPLEGABLE) */}
+        <div 
+          style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}
+        >
+          {/* Botón Principal (Icono de Capas) - Ahora abre y cierra por clic */}
+          <div 
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowLayerMenu(!showLayerMenu);
+            }}
+            title="Cambiar vista del mapa"
+            style={{
+              backgroundColor: '#111827',
+              border: '2px solid rgba(0,0,0,0.2)',
+              borderRadius: '4px',
+              width: '34px',
+              height: '34px',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 1px 5px rgba(0,0,0,0.65)',
+              color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            {/* Icono SVG de Capas */}
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
+            </svg>
+          </div>
+
+          {/* Menú Desplegable (Opciones) */}
+          {showLayerMenu && (
+            <div style={{
+              position: 'absolute',
+              top: '0',
+              left: '42px',
+              backgroundColor: '#111827',
+              border: '1px solid #374151',
+              borderRadius: '6px',
+              padding: '4px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+              width: '140px'
+            }}>
+              {Object.keys(MAP_TILES).map((key) => (
+                <button
+                  key={key}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMapStyle(key);
+                    setShowLayerMenu(false); // Cierra automáticamente al elegir
+                  }}
+                  style={{
+                    backgroundColor: mapStyle === key ? '#2563EB' : 'transparent',
+                    color: mapStyle === key ? 'white' : '#9CA3AF',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '8px 10px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out'
+                  }}
+                >
+                  {MAP_TILES[key].name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* CONTENEDOR DEL MAPA (Hemos quitado el zoomControl: false) */}
+        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
+          
+          {/* TILELAYER DINÁMICO */}
+          <TileLayer 
+            url={MAP_TILES[mapStyle].url} 
+            attribution={MAP_TILES[mapStyle].attribution} 
+          />          
+          
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
@@ -248,7 +358,6 @@ export default function LiveDashboard({ devices, positions }) {
               
               const batteryInfo = getBatteryInfo(device, pos);
               
-              // LÓGICA DE IGNICIÓN CORREGIDA PARA EL MAPA
               const isMoving = pos.speed > 0;
               const rawIgnition = pos.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
@@ -336,7 +445,6 @@ export default function LiveDashboard({ devices, positions }) {
 
               const batteryInfo = getBatteryInfo(device, pos);
               
-              // LÓGICA DE IGNICIÓN CORREGIDA PARA LA LISTA
               const rawIgnition = pos?.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
