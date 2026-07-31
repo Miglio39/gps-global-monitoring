@@ -18,7 +18,7 @@ export default function LiveDashboard({ devices, positions }) {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all');
   
-  // NUEVO ESTADO: Para el buscador de vehículos
+  // ESTADO NUEVO: Para el buscador de vehículos
   const [searchTerm, setSearchTerm] = useState('');
 
   // Lógica Responsive
@@ -56,12 +56,24 @@ export default function LiveDashboard({ devices, positions }) {
   };
   // ====================================================
 
+  // CORRECCIÓN DEL TECLADO MÓVIL (EVITA QUE SE CIERRE LA LISTA AL ESCRIBIR)
   useEffect(() => {
+    let prevWidth = window.innerWidth;
+    
     const handleResize = () => {
-      const mobile = window.innerWidth < 768;
+      const currentWidth = window.innerWidth;
+      const mobile = currentWidth < 768;
+      
       setIsMobile(mobile);
-      if (mobile) setIsListOpen(false);
+      
+      // Solo cierra la lista si el usuario pasó de pantalla grande a móvil real,
+      // ignorando los cambios de altura causados por el teclado del celular.
+      if (mobile && prevWidth >= 768) {
+        setIsListOpen(false);
+      }
+      prevWidth = currentWidth;
     };
+    
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -276,7 +288,7 @@ export default function LiveDashboard({ devices, positions }) {
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
         
-        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA */}
+        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA (ESTILO ICONO DESPLEGABLE) */}
         <div 
           style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}
         >
@@ -437,7 +449,7 @@ export default function LiveDashboard({ devices, positions }) {
           </button>
         </div>
 
-        {/* BARRA DE BÚSQUEDA (NUEVO) */}
+        {/* BARRA DE BÚSQUEDA */}
         {isListOpen && (
           <div style={{ padding: '10px 16px 0 16px' }}>
             <input 
