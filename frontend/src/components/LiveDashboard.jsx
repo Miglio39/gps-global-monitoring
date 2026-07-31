@@ -17,6 +17,9 @@ export default function LiveDashboard({ devices, positions }) {
   const [hasInitialCentered, setHasCentered] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all');
+  
+  // NUEVO ESTADO: Para el buscador de vehículos
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Lógica Responsive
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -26,8 +29,8 @@ export default function LiveDashboard({ devices, positions }) {
   const [armedDevices, setArmedDevices] = useState({});
 
   // === CONFIGURACIÓN DE MAPAS ===
-  const [mapStyle, setMapStyle] = useState('streets'); // Ahora inicia en 'Calles' por defecto
-  const [showLayerMenu, setShowLayerMenu] = useState(false); // Controla si se ve el menú de capas
+  const [mapStyle, setMapStyle] = useState('streets'); 
+  const [showLayerMenu, setShowLayerMenu] = useState(false); 
 
   const MAP_TILES = {
     dark: {
@@ -237,6 +240,7 @@ export default function LiveDashboard({ devices, positions }) {
     });
   };
 
+  // LÓGICA DE FILTRADO (Ahora incluye búsqueda por texto)
   const filteredDevices = devices.filter(device => {
     const pos = getDevicePosition(device.id);
     const isMoving = pos && pos.speed > 0;
@@ -244,11 +248,17 @@ export default function LiveDashboard({ devices, positions }) {
     const isOnline = device.status === 'online';
     const isOffline = device.status !== 'online';
 
-    if (filter === 'moving') return isMoving && isOnline;
-    if (filter === 'stopped') return isStopped && isOnline;
-    if (filter === 'online') return isOnline;
-    if (filter === 'offline') return isOffline;
-    return true; 
+    // 1. Filtro por Estado (Botones KPIs)
+    let matchesStatus = true;
+    if (filter === 'moving') matchesStatus = isMoving && isOnline;
+    if (filter === 'stopped') matchesStatus = isStopped && isOnline;
+    if (filter === 'online') matchesStatus = isOnline;
+    if (filter === 'offline') matchesStatus = isOffline;
+
+    // 2. Filtro por Buscador (Texto)
+    const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
+
+    return matchesStatus && matchesSearch; 
   });
 
   const handleDeviceClick = (device, pos) => {
@@ -266,11 +276,10 @@ export default function LiveDashboard({ devices, positions }) {
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
         
-        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA (ESTILO ICONO DESPLEGABLE) */}
+        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA */}
         <div 
           style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}
         >
-          {/* Botón Principal (Icono de Capas) - Ahora abre y cierra por clic */}
           <div 
             onClick={(e) => {
               e.stopPropagation();
@@ -292,13 +301,11 @@ export default function LiveDashboard({ devices, positions }) {
               transition: 'all 0.2s ease'
             }}
           >
-            {/* Icono SVG de Capas */}
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
             </svg>
           </div>
 
-          {/* Menú Desplegable (Opciones) */}
           {showLayerMenu && (
             <div style={{
               position: 'absolute',
@@ -320,7 +327,7 @@ export default function LiveDashboard({ devices, positions }) {
                   onClick={(e) => {
                     e.stopPropagation();
                     setMapStyle(key);
-                    setShowLayerMenu(false); // Cierra automáticamente al elegir
+                    setShowLayerMenu(false); 
                   }}
                   style={{
                     backgroundColor: mapStyle === key ? '#2563EB' : 'transparent',
@@ -342,10 +349,8 @@ export default function LiveDashboard({ devices, positions }) {
           )}
         </div>
 
-        {/* CONTENEDOR DEL MAPA (Hemos quitado el zoomControl: false) */}
         <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
           
-          {/* TILELAYER DINÁMICO */}
           <TileLayer 
             url={MAP_TILES[mapStyle].url} 
             attribution={MAP_TILES[mapStyle].attribution} 
@@ -410,6 +415,7 @@ export default function LiveDashboard({ devices, positions }) {
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' 
       }}>
         
+        {/* Cabecera del Panel */}
         <div style={{ 
           padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%',
           borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', 
@@ -431,6 +437,30 @@ export default function LiveDashboard({ devices, positions }) {
           </button>
         </div>
 
+        {/* BARRA DE BÚSQUEDA (NUEVO) */}
+        {isListOpen && (
+          <div style={{ padding: '10px 16px 0 16px' }}>
+            <input 
+              type="text" 
+              placeholder="🔍 Buscar vehículo..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid rgba(255,255,255,0.1)',
+                backgroundColor: 'rgba(0,0,0,0.3)',
+                color: '#F3F4F6',
+                outline: 'none',
+                fontSize: '13px',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+        )}
+
+        {/* Lista de Vehículos */}
         {isListOpen && (
           <div style={{ overflowY: 'auto', flex: 1, padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {filteredDevices.map(device => {
