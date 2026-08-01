@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { API_BASE } from '../config';
 
 // Reparador automático del tamaño del mapa al ocultar el panel
 function MapResizer({ isMobilePanelOpen }) {
@@ -51,6 +52,11 @@ export default function RoutePlayback({ devices, token }) {
   const [reportConfig, setReportConfig] = useState({ deviceId: '', from: '', to: '' });
   const [quickRange, setQuickRange] = useState('today');
   
+  // --- NUEVOS ESTADOS PARA EL BUSCADOR DE VEHÍCULOS (CUSTOM DROPDOWN) ---
+  const [deviceSearchTerm, setDeviceSearchTerm] = useState('');
+  const [isDeviceDropdownOpen, setIsDeviceDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
   const [routeData, setRouteData] = useState([]);
   const [stopsData, setStopsData] = useState([]);
   const [isFetching, setIsFetching] = useState(false);
@@ -65,9 +71,34 @@ export default function RoutePlayback({ devices, token }) {
   const [isMobile, setIsMobile] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(true);
 
+  // Cerrar el dropdown al hacer clic fuera
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768);
-    handleResize();
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDeviceDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Lógica Responsive
+  useEffect(() => {
+    let prevWidth = window.innerWidth;
+    
+    const handleResize = () => {
+      const currentWidth = window.innerWidth;
+      const mobile = currentWidth < 768;
+      
+      setIsMobile(mobile);
+      
+      if (mobile && prevWidth >= 768) {
+        setIsMobilePanelOpen(false);
+      }
+      prevWidth = currentWidth;
+    };
+    
+    handleResize(); 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -118,6 +149,11 @@ export default function RoutePlayback({ devices, token }) {
 
   const handleFetchRoute = async (e) => {
     e.preventDefault();
+    if (!reportConfig.deviceId) {
+      alert("Por favor, selecciona un vehículo.");
+      return;
+    }
+
     setIsFetching(true);
     setIsPlaying(false); 
     setPlaybackIndex(0);
@@ -129,8 +165,8 @@ export default function RoutePlayback({ devices, token }) {
       const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
 
       const [routeRes, stopsRes] = await Promise.all([
-        fetch(`https://api.globalmonitorgps.com/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
-        fetch(`https://api.globalmonitorgps.com/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
+        fetch(`${API_BASE}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers }),
+        fetch(`${API_BASE}/api/reports/stops?deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`, { headers })
       ]);
 
       if(routeRes.ok && stopsRes.ok) {
@@ -182,6 +218,13 @@ export default function RoutePlayback({ devices, token }) {
     return segments;
   }, [routeData]);
 
+  // Filtrado de vehículos para el Custom Dropdown
+  const filteredDropdownDevices = useMemo(() => {
+    return devices.filter(d => d.name.toLowerCase().includes(deviceSearchTerm.toLowerCase()));
+  }, [devices, deviceSearchTerm]);
+
+  const selectedDeviceName = devices.find(d => String(d.id) === String(reportConfig.deviceId))?.name || "";
+
   const formatDuration = (ms) => {
     const minutes = Math.floor(ms / 60000);
     if (minutes < 60) return `${minutes} min`;
@@ -195,14 +238,13 @@ export default function RoutePlayback({ devices, token }) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Función de renderizado limpio en lugar de Sub-Componente (Soluciona el bug de la pausa)
   const renderPlaybackControls = (isMobileView) => (
     <div style={isMobileView ? styles.playbackMobileGlass : styles.playbackContainer}>
       
-      {/* FILA 1: Solo Velocidad (Botón Centrar Eliminado) */}
+      {/* FILA 1: Solo Velocidad */}
       <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '10px' }}>
-        <span style={{ color: (routeData[playbackIndex].speed * 1.852) > 80 ? '#EF4444' : (isMobileView ? 'white' : '#9CA3AF'), fontSize: '15px', fontWeight: 'bold' }}>
-          {(routeData[playbackIndex].speed * 1.852).toFixed(1)} km/h
+        <span style={{ color: (routeData[playbackIndex]?.speed * 1.852) > 80 ? '#EF4444' : (isMobileView ? 'white' : '#9CA3AF'), fontSize: '15px', fontWeight: 'bold' }}>
+          {(routeData[playbackIndex]?.speed * 1.852).toFixed(1)} km/h
         </span>
       </div>
       
@@ -213,7 +255,7 @@ export default function RoutePlayback({ devices, token }) {
           const newIdx = Number(e.target.value);
           setPlaybackIndex(newIdx); 
           setIsPlaying(false); 
-          setAutoFollow(true); // Retoma el seguimiento automáticamente al mover la barra
+          setAutoFollow(true); 
           setMapCenter([routeData[newIdx].latitude, routeData[newIdx].longitude]);
         }} 
         style={{ width: '100%', marginBottom: '12px', cursor: 'pointer' }} 
@@ -222,11 +264,13 @@ export default function RoutePlayback({ devices, token }) {
       {/* FILA 3: Botones de Play y Multiplicadores de Velocidad */}
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <button 
-          onClick={() => {
+          onClick={(e) => {
+            e.preventDefault();
             const nextIsPlaying = !isPlaying;
             setIsPlaying(nextIsPlaying);
-            if (nextIsPlaying) setAutoFollow(true); // Retoma el seguimiento al dar Play
+            if (nextIsPlaying) setAutoFollow(true);
           }} 
+          type="button"
           style={{...styles.playBtn, flexShrink: 0, backgroundColor: isPlaying ? '#EF4444' : '#10B981'}}
         >
           {isPlaying ? '⏸️ Pausa' : '▶️ Play'}
@@ -234,7 +278,15 @@ export default function RoutePlayback({ devices, token }) {
         
         <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
           {[1, 2, 5, 10, 20].map(speed => (
-            <button key={speed} onClick={() => setPlaybackSpeed(speed)} style={{...styles.speedBtn, backgroundColor: playbackSpeed === speed ? '#3B82F6' : '#1F2937'}}>
+            <button 
+              key={speed} 
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setPlaybackSpeed(speed);
+              }} 
+              style={{...styles.speedBtn, backgroundColor: playbackSpeed === speed ? '#3B82F6' : '#1F2937'}}
+            >
               x{speed}
             </button>
           ))}
@@ -272,12 +324,63 @@ export default function RoutePlayback({ devices, token }) {
         </div>
         
         <form onSubmit={handleFetchRoute} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <div>
+          
+          {/* BUSCADOR DE VEHÍCULOS (CUSTOM DROPDOWN) */}
+          <div ref={dropdownRef} style={{ position: 'relative' }}>
             <label style={styles.label}>Vehículo:</label>
-            <select required value={reportConfig.deviceId} onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} style={styles.input}>
-              <option value="">-- Seleccionar --</option>
-              {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            
+            {/* Input Falso / Gatillo */}
+            <div 
+              onClick={() => setIsDeviceDropdownOpen(!isDeviceDropdownOpen)}
+              style={{...styles.input, display: 'flex', justifyContent: 'space-between', cursor: 'pointer', backgroundColor: '#0B1120', borderColor: isDeviceDropdownOpen ? '#3B82F6' : '#1F2937' }}
+            >
+              <span style={{ color: selectedDeviceName ? 'white' : '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {selectedDeviceName || "-- Buscar y Seleccionar --"}
+              </span>
+              <span style={{ color: '#9CA3AF' }}>▼</span>
+            </div>
+
+            {/* Menú Desplegable con Buscador */}
+            {isDeviceDropdownOpen && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', marginTop: '4px', zIndex: 9999, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)', overflow: 'hidden' }}>
+                
+                {/* Caja de Búsqueda */}
+                <div style={{ padding: '8px', borderBottom: '1px solid #1F2937' }}>
+                  <input 
+                    type="text" 
+                    placeholder="🔍 Escribe para filtrar..." 
+                    value={deviceSearchTerm}
+                    onChange={(e) => setDeviceSearchTerm(e.target.value)}
+                    onClick={(e) => e.stopPropagation()} // Evita que al hacer clic se cierre
+                    autoFocus
+                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #3B82F6', backgroundColor: '#0B1120', color: 'white', outline: 'none', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                {/* Lista de Resultados */}
+                <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                  {filteredDropdownDevices.length === 0 ? (
+                    <div style={{ padding: '10px', color: '#9CA3AF', fontSize: '13px', textAlign: 'center' }}>No hay coincidencias</div>
+                  ) : (
+                    filteredDropdownDevices.map(d => (
+                      <div 
+                        key={d.id} 
+                        onClick={() => {
+                          setReportConfig({...reportConfig, deviceId: d.id});
+                          setIsDeviceDropdownOpen(false);
+                          setDeviceSearchTerm(''); // Limpiar buscador tras elegir
+                        }}
+                        style={{ padding: '10px 12px', color: 'white', fontSize: '13px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', backgroundColor: reportConfig.deviceId == d.id ? 'rgba(59, 130, 246, 0.2)' : 'transparent' }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = reportConfig.deviceId == d.id ? 'rgba(59, 130, 246, 0.2)' : 'transparent'}
+                      >
+                        {d.name}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           
           <div>
@@ -346,7 +449,7 @@ export default function RoutePlayback({ devices, token }) {
             onClick={() => setIsMobilePanelOpen(true)}
             style={{ position: 'absolute', top: '15px', right: '15px', zIndex: 1000, backgroundColor: '#2563EB', color: 'white', padding: '10px 16px', borderRadius: '8px', border: 'none', fontWeight: 'bold', boxShadow: '0 4px 10px rgba(0,0,0,0.4)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
           >
-            ⚙️ Filtros
+            ⚙️ Controles
           </button>
         )}
 
@@ -354,7 +457,8 @@ export default function RoutePlayback({ devices, token }) {
           <MapInteractions center={mapCenter} autoFollow={autoFollow} setAutoFollow={setAutoFollow} />
           <MapResizer isMobilePanelOpen={isMobilePanelOpen} />
           
-<TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />          
+          
           {coloredRouteSegments.map((segment, idx) => (
             <Polyline 
               key={idx} 
@@ -365,7 +469,7 @@ export default function RoutePlayback({ devices, token }) {
             />
           ))}
 
-          {routeData.length > 0 && (
+          {routeData.length > 0 && routeData[playbackIndex] && (
             <Marker position={[routeData[playbackIndex].latitude, routeData[playbackIndex].longitude]} icon={movingIcon}>
               <Popup>
                 <div style={{ textAlign: 'center' }}>
