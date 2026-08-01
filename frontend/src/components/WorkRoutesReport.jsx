@@ -7,6 +7,22 @@ import 'leaflet/dist/leaflet.css';
 const LOCATION_IQ_KEY = 'pk.e0a46bceeed78c708e78aacfc0b2942c';
 const geoCache = {}; 
 
+// --- NUEVO: Creador de marcadores personalizados en SVG ---
+// Esto soluciona los iconos rotos de Leaflet en React y ancla la punta a la calle exacta.
+const createPinIcon = (color) => new L.divIcon({
+  className: 'custom-pin',
+  html: `<svg width="30" height="42" viewBox="0 0 24 36" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.5));">
+           <path d="M12 0C5.373 0 0 5.373 0 12c0 7.5 12 24 12 24s12-16.5 12-24c0-6.627-5.373-12-12-12zm0 18c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z" fill="${color}"/>
+           <circle cx="12" cy="12" r="5" fill="#FFF"/>
+         </svg>`,
+  iconSize: [30, 42],
+  iconAnchor: [15, 42], // La punta exacta del alfiler toca la coordenada
+  popupAnchor: [0, -40] // El popup emerge justo arriba del pin
+});
+
+const originIcon = createPinIcon('#10B981'); // Verde Esmeralda para Origen
+const destIcon = createPinIcon('#EF4444');   // Rojo para Destino
+
 function MapBounds({ routeData }) {
   const map = useMap();
   React.useEffect(() => {
@@ -60,7 +76,7 @@ export default function WorkRoutesReport({ devices }) {
     return { municipio: municipio || 'Desconocido', referencia: referencia || 'Sin referencia' };
   };
 
-  // 2. Traductor de Rescate (Si Traccar deja el destino en blanco, esto lo arregla)
+  // 2. Traductor de Rescate
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return { municipio: 'Desconocido', referencia: 'Sin coordenadas' };
     
@@ -70,7 +86,7 @@ export default function WorkRoutesReport({ devices }) {
     try {
       const res = await fetch(`https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json&accept-language=es`);
       
-      // Pausa de 350ms obligatoria para no saturar el límite gratuito de LocationIQ
+      // Pausa obligatoria para no saturar API
       await new Promise(resolve => setTimeout(resolve, 350)); 
       
       if (res.ok) {
@@ -193,7 +209,6 @@ export default function WorkRoutesReport({ devices }) {
     }
   };
 
-  // --- NUEVA LÓGICA DE EXCEL (PLANTILLA HTML .XLS) BASADA EN TU REPORTS.JSX ---
   const handleDownloadExcel = () => {
     if (reportData.length === 0) {
       return alert("No hay datos para exportar. Genera el reporte primero.");
@@ -388,11 +403,18 @@ export default function WorkRoutesReport({ devices }) {
                   
                   <Polyline positions={modalRouteData.map(p => [p.latitude, p.longitude])} color="#3B82F6" weight={5} opacity={0.8} />
                   
-                  <Marker position={[modalRouteData[0].latitude, modalRouteData[0].longitude]}>
+                  {/* --- AQUÍ SE INYECTAN LOS ICONOS CORREGIDOS --- */}
+                  <Marker 
+                    position={[modalRouteData[0].latitude, modalRouteData[0].longitude]} 
+                    icon={originIcon}
+                  >
                     <Popup><b style={{color: '#10B981'}}>🟢 Punto de Origen</b><br/>{new Date(modalRouteData[0].fixTime).toLocaleString()}</Popup>
                   </Marker>
                   
-                  <Marker position={[modalRouteData[modalRouteData.length - 1].latitude, modalRouteData[modalRouteData.length - 1].longitude]}>
+                  <Marker 
+                    position={[modalRouteData[modalRouteData.length - 1].latitude, modalRouteData[modalRouteData.length - 1].longitude]} 
+                    icon={destIcon}
+                  >
                     <Popup><b style={{color: '#EF4444'}}>🔴 Punto de Destino</b><br/>{new Date(modalRouteData[modalRouteData.length - 1].fixTime).toLocaleString()}</Popup>
                   </Marker>
                 </MapContainer>
