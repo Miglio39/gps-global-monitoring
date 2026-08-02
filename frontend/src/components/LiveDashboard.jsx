@@ -12,94 +12,83 @@ function ChangeView({ center }) {
   return null;
 }
 
+// === GALERÍA DE SPRITES (Camioneta Pickup "Hilux" Garantizada) ===
+const VEHICLE_SPRITES = {
+  automovil: { label: 'Carro', url: 'https://img.icons8.com/fluency/96/car.png' },
+  camioneta: { label: 'Camioneta', url: 'https://img.icons8.com/color/96/pickup.png' }, // <-- Camioneta Platón asegurada
+  van: { label: 'Van', url: 'https://img.icons8.com/fluency/96/van.png' },
+  camion: { label: 'Camión', url: 'https://img.icons8.com/fluency/96/truck.png' },
+  tractocamion: { label: 'Semi-Truck', url: 'https://img.icons8.com/color/96/container-truck.png' }, 
+  volqueta: { label: 'Volqueta', url: 'https://img.icons8.com/color/96/dump-truck.png' }, 
+  taxi: { label: 'Taxi', url: 'https://img.icons8.com/fluency/96/taxi.png' },
+  furgon: { label: 'Reparto', url: 'https://img.icons8.com/color/96/in-transit.png' },
+  grua: { label: 'Grúa', url: 'https://img.icons8.com/color/96/tow-truck.png' },
+  moto: { label: 'Moto', url: 'https://img.icons8.com/fluency/96/motorcycle.png' },
+  scooter: { label: 'Scooter', url: 'https://img.icons8.com/fluency/96/scooter.png' },
+  bus: { label: 'Bus', url: 'https://img.icons8.com/fluency/96/bus.png' },
+  tractor: { label: 'Tractor', url: 'https://img.icons8.com/fluency/96/tractor.png' },
+  ambulancia: { label: 'Ambulancia', url: 'https://img.icons8.com/fluency/96/ambulance.png' },
+  patrulla: { label: 'Policía', url: 'https://img.icons8.com/fluency/96/police-car.png' },
+  bicicleta: { label: 'Bicicleta', url: 'https://img.icons8.com/fluency/96/bicycle.png' }
+};
+
 export default function LiveDashboard({ devices, positions }) {
   const [map, setMap] = useState(null); 
   const [hasInitialCentered, setHasCentered] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all');
   
-  // ESTADO NUEVO: Para el buscador de vehículos
   const [searchTerm, setSearchTerm] = useState('');
 
   // Lógica Responsive
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [isListOpen, setIsListOpen] = useState(window.innerWidth >= 768);
 
-  // ESTADO NUEVO: Dispositivos con la "Alarma de Vigilancia" activada
   const [armedDevices, setArmedDevices] = useState({});
+
+  // ESTADO DE EDICIÓN DE ÍCONO
+  const [iconEditModal, setIconEditModal] = useState({ isOpen: false, device: null });
+  const [localCategories, setLocalCategories] = useState({}); 
 
   // === CONFIGURACIÓN DE MAPAS ===
   const [mapStyle, setMapStyle] = useState('streets'); 
   const [showLayerMenu, setShowLayerMenu] = useState(false); 
 
   const MAP_TILES = {
-    dark: {
-      name: '🌙 Oscuro',
-      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-      attribution: '&copy; CartoDB'
-    },
-    googleHybrid: {
-      name: '🌍 Híbrido',
-      url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-      attribution: '&copy; Google Maps'
-    },
-    googleSat: {
-      name: '🛰️ Satélite',
-      url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-      attribution: '&copy; Google Maps'
-    },
-    streets: {
-      name: '🗺️ Calles',
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      attribution: '&copy; OpenStreetMap'
-    }
+    dark: { name: '🌙 Oscuro', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; CartoDB' },
+    googleHybrid: { name: '🌍 Híbrido', url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attribution: '&copy; Google Maps' },
+    googleSat: { name: '🛰️ Satélite', url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attribution: '&copy; Google Maps' },
+    streets: { name: '🗺️ Calles', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap' }
   };
-  // ====================================================
 
-  // CORRECCIÓN DEL TECLADO MÓVIL (EVITA QUE SE CIERRE LA LISTA AL ESCRIBIR)
   useEffect(() => {
     let prevWidth = window.innerWidth;
-    
     const handleResize = () => {
       const currentWidth = window.innerWidth;
       const mobile = currentWidth < 768;
-      
       setIsMobile(mobile);
-      
-      // Solo cierra la lista si el usuario pasó de pantalla grande a móvil real,
-      // ignorando los cambios de altura causados por el teclado del celular.
-      if (mobile && prevWidth >= 768) {
-        setIsListOpen(false);
-      }
+      if (mobile && prevWidth >= 768) { setIsListOpen(false); }
       prevWidth = currentWidth;
     };
-    
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Token para comandos
   const token = localStorage.getItem('traccar_token');
-
   const getDevicePosition = (deviceId) => positions[deviceId];
 
-  // Centrado inicial inteligente
   useEffect(() => {
     const validPositions = Object.values(positions).filter(p => p && p.latitude && p.longitude);
-    
     if (!hasInitialCentered && validPositions.length > 0 && map) {
       const sumLat = validPositions.reduce((sum, p) => sum + p.latitude, 0);
       const sumLng = validPositions.reduce((sum, p) => sum + p.longitude, 0);
-      
       const avgLat = sumLat / validPositions.length;
       const avgLng = sumLng / validPositions.length;
-
       map.setView([avgLat, avgLng], 12);
       setHasCentered(true);
     }
   }, [positions, hasInitialCentered, map]);
 
-  // LÓGICA DE ALARMA: Suena si el carro se mueve o enciende
   useEffect(() => {
     try {
       const hasNotificationAPI = 'Notification' in window;
@@ -126,7 +115,7 @@ export default function LiveDashboard({ devices, positions }) {
           if (isArmed && isEngineOn) {
             alarmTriggered = true;
             deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
-            updatedArmedDevices[deviceId] = false; // Apagamos la vigilancia
+            updatedArmedDevices[deviceId] = false; 
           }
         }
       });
@@ -202,6 +191,24 @@ export default function LiveDashboard({ devices, positions }) {
     }
   };
 
+  const handleSaveIcon = async (newCategory) => {
+    const device = iconEditModal.device;
+    if (!device) return;
+
+    setLocalCategories(prev => ({ ...prev, [device.id]: newCategory }));
+    setIconEditModal({ isOpen: false, device: null });
+
+    try {
+      const updatedDevice = { ...device, category: newCategory };
+      const response = await fetch(`${API_BASE}/api/devices/${device.id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDevice)
+      });
+      if (!response.ok) { throw new Error('No se pudo guardar la configuración'); }
+    } catch (error) { console.error(error); }
+  };
+
   const getBatteryInfo = (device, pos) => {
     const bLevel = pos?.attributes?.batteryLevel ?? device?.attributes?.batteryLevel;
     const bVolts = pos?.attributes?.battery ?? device?.attributes?.battery;
@@ -216,31 +223,36 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
-  const createCustomMarker = (name, speed, status) => {
+  // === MARCADOR ESTILO SPRITE DE VIDEOJUEGO ===
+  const createCustomMarker = (device, speed, status) => {
     const isMoving = speed > 0;
-    let color = '#8B5CF6'; 
-    if (status !== 'online') color = '#EF4444'; 
-    else if (isMoving) color = '#10B981';
+    
+    let statusColor = '#8B5CF6'; 
+    if (status !== 'online') statusColor = '#EF4444'; 
+    else if (isMoving) statusColor = '#10B981';
+
+    const categoryKey = localCategories[device.id] || device.category || 'automovil';
+    const spriteUrl = VEHICLE_SPRITES[categoryKey] ? VEHICLE_SPRITES[categoryKey].url : VEHICLE_SPRITES.automovil.url;
     
     const html = `
-      <div style="display: flex; align-items: center;">
-        <div style="position: relative; width: 30px; height: 38px; flex-shrink: 0; filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.4));">
-          <svg viewBox="0 0 24 34" width="30" height="38" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 0C5.373 0 0 5.373 0 12c0 8.25 12 22 12 22s12-13.75 12-22c0-6.627-5.373-12-12-12z" fill="${color}" />
-            <path d="M7 14l1.5-4h7L17 14v4h-1.5v2h-2v-2h-3v2h-2v-2H7v-4zm2.5-3h5l-.5-1.5h-4l-.5 1.5zM8 15.5c0 .28.22.5.5.5s.5-.22.5-.5-.22-.5-.5-.5-.5.22-.5.5zm7 0c0 .28.22.5.5.5s.5-.22.5-.5-.22-.5-.5-.5-.5.22-.5.5z" fill="white" />
-          </svg>
-        </div>
-        <div style="background: rgba(17, 24, 39, 0.95); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-family: 'Inter', Arial, sans-serif; font-weight: 700; color: #F3F4F6; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 6px rgba(0,0,0,0.4); margin-left: 4px;">
-          ${name}
+      <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%);">
+        <img 
+          src="${spriteUrl}" 
+          onerror="this.onerror=null;this.src='https://img.icons8.com/fluency/96/car.png';"
+          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5));" 
+          alt="sprite" 
+        />
+        <div style="background: rgba(15, 23, 42, 0.9); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: 'Inter', Arial, sans-serif; font-weight: 700; color: #F3F4F6; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); border-bottom: 3px solid ${statusColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.4); margin-top: -4px;">
+          ${device.name}
         </div>
       </div>
     `;
     
     return L.divIcon({ 
-      className: 'traccar-custom-pin', 
+      className: 'traccar-videogame-pin', 
       html: html, 
-      iconAnchor: [15, 38], 
-      popupAnchor: [0, -38] 
+      iconAnchor: [10, 10], 
+      popupAnchor: [0, -25] 
     });
   };
 
@@ -252,7 +264,6 @@ export default function LiveDashboard({ devices, positions }) {
     });
   };
 
-  // LÓGICA DE FILTRADO (Ahora incluye búsqueda por texto)
   const filteredDevices = devices.filter(device => {
     const pos = getDevicePosition(device.id);
     const isMoving = pos && pos.speed > 0;
@@ -260,14 +271,12 @@ export default function LiveDashboard({ devices, positions }) {
     const isOnline = device.status === 'online';
     const isOffline = device.status !== 'online';
 
-    // 1. Filtro por Estado (Botones KPIs)
     let matchesStatus = true;
     if (filter === 'moving') matchesStatus = isMoving && isOnline;
     if (filter === 'stopped') matchesStatus = isStopped && isOnline;
     if (filter === 'online') matchesStatus = isOnline;
     if (filter === 'offline') matchesStatus = isOffline;
 
-    // 2. Filtro por Buscador (Texto)
     const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
 
     return matchesStatus && matchesSearch; 
@@ -288,30 +297,14 @@ export default function LiveDashboard({ devices, positions }) {
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
         
-        {/* SELECTOR FLOTANTE DE CAPAS DE MAPA (ESTILO ICONO DESPLEGABLE) */}
-        <div 
-          style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}
-        >
+        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}>
           <div 
             onClick={(e) => {
               e.stopPropagation();
               setShowLayerMenu(!showLayerMenu);
             }}
             title="Cambiar vista del mapa"
-            style={{
-              backgroundColor: '#111827',
-              border: '2px solid rgba(0,0,0,0.2)',
-              borderRadius: '4px',
-              width: '34px',
-              height: '34px',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              cursor: 'pointer',
-              boxShadow: '0 1px 5px rgba(0,0,0,0.65)',
-              color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF',
-              transition: 'all 0.2s ease'
-            }}
+            style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
@@ -319,41 +312,9 @@ export default function LiveDashboard({ devices, positions }) {
           </div>
 
           {showLayerMenu && (
-            <div style={{
-              position: 'absolute',
-              top: '0',
-              left: '42px',
-              backgroundColor: '#111827',
-              border: '1px solid #374151',
-              borderRadius: '6px',
-              padding: '4px',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '2px',
-              width: '140px'
-            }}>
+            <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
               {Object.keys(MAP_TILES).map((key) => (
-                <button
-                  key={key}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMapStyle(key);
-                    setShowLayerMenu(false); 
-                  }}
-                  style={{
-                    backgroundColor: mapStyle === key ? '#2563EB' : 'transparent',
-                    color: mapStyle === key ? 'white' : '#9CA3AF',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '8px 10px',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease-in-out'
-                  }}
-                >
+                <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
                   {MAP_TILES[key].name}
                 </button>
               ))}
@@ -362,11 +323,7 @@ export default function LiveDashboard({ devices, positions }) {
         </div>
 
         <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
-          
-          <TileLayer 
-            url={MAP_TILES[mapStyle].url} 
-            attribution={MAP_TILES[mapStyle].attribution} 
-          />          
+          <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
           
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
@@ -374,14 +331,18 @@ export default function LiveDashboard({ devices, positions }) {
               if (!pos) return null;
               
               const batteryInfo = getBatteryInfo(device, pos);
-              
               const isMoving = pos.speed > 0;
               const rawIgnition = pos.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
 
               return (
-                <Marker key={device.id} position={[pos.latitude, pos.longitude]} icon={createCustomMarker(device.name, pos.speed, device.status)} eventHandlers={{ click: () => handleDeviceClick(device, pos) }}>
+                <Marker 
+                  key={device.id} 
+                  position={[pos.latitude, pos.longitude]} 
+                  icon={createCustomMarker(device, pos.speed, device.status)}
+                  eventHandlers={{ click: () => handleDeviceClick(device, pos) }}
+                >
                   <Popup>
                     <b style={{color:'black', fontSize:'13px'}}>{device.name}</b><br/>
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
@@ -427,29 +388,18 @@ export default function LiveDashboard({ devices, positions }) {
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' 
       }}>
         
-        {/* Cabecera del Panel */}
-        <div style={{ 
-          padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%',
-          borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', 
-          justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' 
-        }}>
+        <div style={{ padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%', borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' }}>
           {isListOpen && (
             <div>
               <h3 style={{ margin: 0, color: '#F3F4F6', fontSize: '14px', fontWeight: '700' }}>Flota Activa ({filteredDevices.length})</h3>
               <p style={{ margin: '2px 0 0 0', color: '#9CA3AF', fontSize: '10px', textTransform: 'uppercase', fontWeight: '600' }}>Filtro: {filter}</p>
             </div>
           )}
-          <button onClick={() => setIsListOpen(!isListOpen)} style={{ 
-            background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', 
-            color: '#9CA3AF', cursor: 'pointer', fontSize: isListOpen ? '14px' : '18px', 
-            width: isListOpen ? '28px' : '100%', height: isListOpen ? '28px' : '100%', borderRadius: '8px', 
-            display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' 
-          }}>
+          <button onClick={() => setIsListOpen(!isListOpen)} style={{ background: isListOpen ? 'rgba(255,255,255,0.05)' : 'transparent', border: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: isListOpen ? '14px' : '18px', width: isListOpen ? '28px' : '100%', height: isListOpen ? '28px' : '100%', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
             {isListOpen ? '✕' : '🚚'}
           </button>
         </div>
 
-        {/* BARRA DE BÚSQUEDA */}
         {isListOpen && (
           <div style={{ padding: '10px 16px 0 16px' }}>
             <input 
@@ -457,22 +407,11 @@ export default function LiveDashboard({ devices, positions }) {
               placeholder="🔍 Buscar vehículo..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: '6px',
-                border: '1px solid rgba(255,255,255,0.1)',
-                backgroundColor: 'rgba(0,0,0,0.3)',
-                color: '#F3F4F6',
-                outline: 'none',
-                fontSize: '13px',
-                boxSizing: 'border-box'
-              }}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(0,0,0,0.3)', color: '#F3F4F6', outline: 'none', fontSize: '13px', boxSizing: 'border-box' }}
             />
           </div>
         )}
 
-        {/* Lista de Vehículos */}
         {isListOpen && (
           <div style={{ overflowY: 'auto', flex: 1, padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {filteredDevices.map(device => {
@@ -486,7 +425,6 @@ export default function LiveDashboard({ devices, positions }) {
               else if (isMoving) statusDotColor = '#10B981'; 
 
               const batteryInfo = getBatteryInfo(device, pos);
-              
               const rawIgnition = pos?.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
@@ -500,7 +438,6 @@ export default function LiveDashboard({ devices, positions }) {
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusDotColor, boxShadow: `0 0 8px ${statusDotColor}`, flexShrink: 0 }}></div>
                   
                   <div style={{ overflow: 'hidden', flex: 1 }}>
-                    
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600' }}>
                         {device.name}
@@ -532,9 +469,21 @@ export default function LiveDashboard({ devices, positions }) {
                         {device.status !== 'online' ? 'Desconectado' : pos ? `${(pos.speed * 1.852).toFixed(0)} km/h` : '0 km/h'}
                       </span>
                       
-                      {/* MICRO-BOTONES */}
                       <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
                         
+                        <button 
+                          title="Cambiar Ícono"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIconEditModal({ isOpen: true, device: device });
+                          }}
+                          style={{ backgroundColor: 'transparent', border: '1px solid rgba(59, 130, 246, 0.5)', color: '#60A5FA', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.15)'; }}
+                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
+                        >
+                          ✏️ Ícono
+                        </button>
+
                         <button 
                           title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
                           onClick={(e) => {
@@ -568,7 +517,6 @@ export default function LiveDashboard({ devices, positions }) {
                         </button>
                       </div>
                     </div>
-
                   </div>
                 </div>
               )
@@ -576,6 +524,69 @@ export default function LiveDashboard({ devices, positions }) {
           </div>
         )}
       </div>
+
+      {/* MODAL PARA ELEGIR EL SPRITE */}
+      {iconEditModal.isOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }} onClick={() => setIconEditModal({ isOpen: false, device: null })}>
+          <div style={{
+            backgroundColor: '#111827', padding: '20px', borderRadius: '12px',
+            border: '1px solid #374151', width: '90%', maxWidth: '420px', 
+            boxShadow: '0 10px 25px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '15px'
+          }} onClick={e => e.stopPropagation()}>
+            
+            <h3 style={{ margin: 0, color: 'white', fontSize: '16px', textAlign: 'center' }}>
+              Seleccionar Vehículo<br/>
+              <span style={{fontSize: '12px', color: '#9CA3AF', fontWeight: 'normal'}}>
+                {iconEditModal.device?.name}
+              </span>
+            </h3>
+            
+            <div style={{ 
+              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', 
+              maxHeight: '60vh', overflowY: 'auto', padding: '5px' 
+            }}>
+              {Object.keys(VEHICLE_SPRITES).map(key => {
+                const sprite = VEHICLE_SPRITES[key];
+                return (
+                  <button
+                    key={key}
+                    onClick={() => handleSaveIcon(key)} 
+                    style={{
+                      backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '8px', padding: '12px 5px',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
+                      cursor: 'pointer', color: 'white', transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.2)'; e.currentTarget.style.borderColor = '#3B82F6'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+                  >
+                    <img 
+                      src={sprite.url} 
+                      onError={(e) => { e.target.onerror = null; e.target.src = 'https://img.icons8.com/fluency/96/car.png'; }}
+                      style={{ width: '32px', height: '32px', objectFit: 'contain' }} 
+                      alt={sprite.label} 
+                    />
+                    <span style={{ fontSize: '10px', fontWeight: 'bold', textAlign: 'center' }}>{sprite.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            
+            <button 
+              onClick={() => setIconEditModal({ isOpen: false, device: null })}
+              style={{ marginTop: '5px', padding: '10px', borderRadius: '8px', backgroundColor: '#374151', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#4B5563'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#374151'}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
