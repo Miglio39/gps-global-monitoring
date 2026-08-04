@@ -1,14 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function DeviceManagement({ token, devices }) {
   const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   
-  // Estado para el buscador de dispositivos
+  // Estados para el buscador de dispositivos y la asignación de usuarios
   const [searchTerm, setSearchTerm] = useState('');
+  const [users, setUsers] = useState([]);
+  const [selectedUserToAssign, setSelectedUserToAssign] = useState('');
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
+
+  // Cargar la lista de usuarios para poder asignarlos al crear el GPS
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/api/users`, {
+          headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setUsers(data);
+        }
+      } catch (err) {
+        console.error("Error cargando usuarios:", err);
+      }
+    };
+    fetchUsers();
+  }, [token]);
 
   const handleSaveDevice = async (e) => {
     e.preventDefault();
@@ -44,11 +64,28 @@ export default function DeviceManagement({ token, devices }) {
             headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' }, 
             body: JSON.stringify(payload) 
         });
+        
         if (res.ok) { 
-            setAdminMessage({ text: 'GPS registrado exitosamente.', type: 'success' });
+            const newDevice = await res.json(); // Obtenemos el objeto del GPS recién creado con su ID
+            
+            // === LA MAGIA: Asignación inmediata al usuario seleccionado ===
+            if (selectedUserToAssign) {
+              try {
+                await fetch(`${BASE_URL}/api/permissions`, {
+                  method: 'POST',
+                  headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId: parseInt(selectedUserToAssign), deviceId: newDevice.id })
+                });
+              } catch (permErr) {
+                console.error("Error asignando el GPS al usuario:", permErr);
+              }
+            }
+
+            setAdminMessage({ text: 'GPS registrado y asignado exitosamente.', type: 'success' });
             setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
+            setSelectedUserToAssign(''); // Limpiar el selector de usuarios
         } else {
-            setAdminMessage({ text: 'Error: El IMEI ya está registrado.', type: 'error' });
+            setAdminMessage({ text: 'Error: El IMEI ya está registrado o hay un error en los datos.', type: 'error' });
         }
     }
   };
@@ -131,6 +168,24 @@ export default function DeviceManagement({ token, devices }) {
                 <option value="5027">Teltonika (5027)</option>
                 <option value="5093">Ruptela (5093)</option>
             </select>
+
+            {/* SELECTOR DE USUARIO (Solo visible al crear un nuevo GPS) */}
+            {!editingDeviceId && (
+              <select 
+                  value={selectedUserToAssign} 
+                  onChange={e => setSelectedUserToAssign(e.target.value)} 
+                  style={{...styles.input, color: selectedUserToAssign ? 'white' : '#9CA3AF', border: '1px solid #3B82F6'}}
+                  className="dev-form-input"
+                  title="Selecciona a qué cliente pertenecerá este GPS"
+              >
+                  <option value="">-- Asignar a cliente (Opcional) --</option>
+                  {users.map(u => (
+                      <option key={u.id} value={u.id}>
+                          {u.name} ({u.email})
+                      </option>
+                  ))}
+              </select>
+            )}
           </div>
 
           <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>

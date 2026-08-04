@@ -381,7 +381,7 @@ export default function LiveDashboard({ devices, positions }) {
       {/* PANEL FLOTANTE DE UNIDADES */}
       <div style={{ 
         position: 'absolute', top: 15, right: 15, bottom: isListOpen ? 15 : 'auto', 
-        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '320px') : '44px', 
+        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '380px') : '44px', 
         height: isListOpen ? 'auto' : '44px', maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
         backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', borderRadius: '14px', 
         border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, display: 'flex', flexDirection: 'column', 
@@ -551,6 +551,9 @@ export default function LiveDashboard({ devices, positions }) {
             }}>
               {Object.keys(VEHICLE_SPRITES).map(key => {
                 const sprite = VEHICLE_SPRITES[key];
+                
+
+
                 return (
                   <button
                     key={key}
