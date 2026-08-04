@@ -291,6 +291,13 @@ export default function LiveDashboard({ devices, positions }) {
     }
   };
 
+  // Función para abrir Google Street View
+  const openStreetView = (lat, lng) => {
+    if (!lat || !lng) return;
+    const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+    window.open(url, '_blank');
+  };
+
   return (
     <main style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
       
@@ -349,6 +356,34 @@ export default function LiveDashboard({ devices, positions }) {
                     <span style={{color:'#666', fontSize:'11px'}}>Estado: {device.status === 'online' ? '🟢 Conectado' : '🔴 Fuera de Línea'}</span><br/>
                     {hasIgnition && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
                     {batteryInfo.text && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
+                    
+                    {/* 👇 NUEVO BOTÓN DE STREET VIEW 👇 */}
+                    <div style={{ marginTop: '10px' }}>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openStreetView(pos.latitude, pos.longitude);
+                        }}
+                        style={{ 
+                          backgroundColor: '#3B82F6', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '6px', 
+                          padding: '6px 0', 
+                          fontSize: '11px', 
+                          fontWeight: 'bold', 
+                          cursor: 'pointer', 
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                        }}
+                      >
+                        👁️ Ver Street View
+                      </button>
+                    </div>
                   </Popup>
                 </Marker>
               )
