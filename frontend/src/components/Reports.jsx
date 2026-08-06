@@ -29,6 +29,9 @@ export default function Reports({ devices, token }) {
   
   const [isFetching, setIsFetching] = useState(false);
 
+  // NUEVO ESTADO: Controla la ventana flotante del mapa
+  const [mapModal, setMapModal] = useState({ isOpen: false, lat: 0, lng: 0 });
+
   // Traductor Inverso de Coordenadas a Direcciones Reales
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return 'Coordenadas inválidas';
@@ -149,7 +152,6 @@ export default function Reports({ devices, token }) {
                 });
         }
       } 
-      // ---> AQUÍ AGRUPAMOS ROUTE Y ECOPETROL PARA REUSAR LA PETICIÓN <---
       else if (reportType === 'route' || reportType === 'ecopetrol') {
         const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) setRouteData(await res.json());
@@ -343,7 +345,7 @@ export default function Reports({ devices, token }) {
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
     if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO CONSOLIDADO";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
-    else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; // Título Excel Ecopetrol
+    else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; 
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
     else if (reportType === 'fleet_speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (TODA LA FLOTA)";
     else if (reportType === 'harsh') nombreReporteMayus = "INFORME DE ACELERACIONES Y FRENADAS BRUSCAS";
@@ -430,7 +432,6 @@ export default function Reports({ devices, token }) {
         `;
       });
     }
-    // ---> INYECCIÓN EXCEL: INFORME ECOPETROL <---
     else if (reportType === 'ecopetrol') {
       if (routeData.length === 0) return alert("No hay datos para exportar.");
       htmlTemplate += `
@@ -588,7 +589,6 @@ export default function Reports({ devices, token }) {
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <option value="daily">Resumen Diario</option>
                 <option value="route">Detallado Punto a Punto</option>
-                {/* NUEVO INFORME ECOPETROL AÑADIDO AL SELECTOR */}
                 <option value="ecopetrol">Informe Completo Ecopetrol</option>
                 <option value="speed">Exceso de Velocidad (Individual)</option>
                 <option value="fleet_speed">Exceso de Velocidad (Toda la Flota)</option>
@@ -690,7 +690,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 2. TABLA: DETALLADO PUNTO A PUNTO (EL NORMAL) */}
+        {/* 2. TABLA: DETALLADO PUNTO A PUNTO */}
         {reportType === 'route' && (
           <>
             <h3 style={styles.tableTitle}>Detallado Punto a Punto ({routeData.length} puntos extraídos)</h3>
@@ -732,7 +732,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* ---> TABLA NUEVA: INFORME COMPLETO ECOPETROL <--- */}
+        {/* 3. TABLA NUEVA: INFORME COMPLETO ECOPETROL (AHORA CON BOTÓN DE MAPA) */}
         {reportType === 'ecopetrol' && (
           <>
             <h3 style={styles.tableTitle}>Informe Completo de Ecopetrol ({routeData.length} registros extraídos)</h3>
@@ -755,10 +755,7 @@ export default function Reports({ devices, token }) {
                   routeData.slice(0, 3000).map((pos) => { 
                     const speed = (pos.speed * 1.852).toFixed(1);
                     const dt = new Date(pos.fixTime);
-                    
-                    // Extraemos placa usando el array de dispositivos y el ID de este punto.
                     const placa = devices.find(d => String(d.id) === String(pos.deviceId))?.name || 'Desconocido';
-                    // Traccar aloja el kilometraje en atributos en metros, se divide en 1000.
                     const odometer = ((pos.attributes?.totalDistance || pos.attributes?.odometer || 0) / 1000).toFixed(2);
                     const address = pos.address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`;
 
@@ -773,8 +770,16 @@ export default function Reports({ devices, token }) {
                         <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{odometer}</td>
                         <td style={styles.td}>{pos.latitude.toFixed(5)}</td>
                         <td style={styles.td}>{pos.longitude.toFixed(5)}</td>
-                        <td style={{...styles.td, fontSize: '11px', maxWidth: '250px', whiteSpace: 'normal'}}>
-                          {address}
+                        <td style={{...styles.td, fontSize: '12px', maxWidth: '250px', whiteSpace: 'normal'}}>
+                          {/* BOTÓN INTERACTIVO PARA ABRIR MAPA FLOTANTE */}
+                          <button 
+                            type="button" 
+                            onClick={() => setMapModal({ isOpen: true, lat: pos.latitude, lng: pos.longitude })}
+                            style={{ background: 'none', border: 'none', color: '#60A5FA', cursor: 'pointer', textDecoration: 'underline', padding: 0, textAlign: 'left', fontSize: '11px' }}
+                            title="Haz clic para ver el mapa"
+                          >
+                            📍 {address}
+                          </button>
                         </td>
                       </tr>
                     )
@@ -786,7 +791,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3 & 4. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
+        {/* 4 & 5. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
         {(reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones / Alertas ({eventsData.length} eventos)</h3>
@@ -848,7 +853,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 5 & 6. TABLAS: RALENTÍ Y PARADAS */}
+        {/* 6. TABLAS: RALENTÍ Y PARADAS */}
         {(reportType === 'stops' || reportType === 'idle') && (
           <>
             <h3 style={styles.tableTitle}>{reportType === 'idle' ? 'Tiempos en Ralentí (Motor encendido sin movimiento)' : 'Registro de Paradas' } ({stopsData.length} eventos)</h3>
@@ -885,6 +890,32 @@ export default function Reports({ devices, token }) {
         )}
 
       </div>
+
+      {/* RENDERIZADO DEL MAPA FLOTANTE (MODAL) */}
+      {mapModal.isOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3 style={{ margin: 0, color: 'white' }}>Ubicación Satelital Exacta</h3>
+              <button 
+                onClick={() => setMapModal({ isOpen: false, lat: 0, lng: 0 })} 
+                style={styles.closeBtn}
+              >
+                X
+              </button>
+            </div>
+            <iframe
+              title="Google Maps"
+              width="100%"
+              height="350"
+              style={{ border: 0, borderRadius: '8px' }}
+              loading="lazy"
+              allowFullScreen
+              src={`https://maps.google.com/maps?q=${mapModal.lat},${mapModal.lng}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
+            ></iframe>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -899,5 +930,10 @@ const styles = {
   table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: '#9CA3AF' },
   tableHead: { color: 'white', fontSize: '13px' },
   td: { padding: '12px 10px', fontSize: '13px' },
-  emptyText: { padding: '30px', textAlign: 'center', color: '#6B7280' }
+  emptyText: { padding: '30px', textAlign: 'center', color: '#6B7280' },
+  // Estilos del Mapa Flotante
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
+  modalContent: { backgroundColor: '#1F2937', padding: '20px', borderRadius: '12px', width: '90%', maxWidth: '600px', border: '1px solid #374151', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' },
+  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
+  closeBtn: { backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '4px', padding: '5px 12px', cursor: 'pointer', fontWeight: 'bold' }
 };
