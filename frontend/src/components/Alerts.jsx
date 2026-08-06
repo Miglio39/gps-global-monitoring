@@ -3,7 +3,6 @@ import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// Componente para forzar centrado de cámara
 function ChangeView({ center }) {
   const map = useMap();
   map.setView(center, map.getZoom());
@@ -16,26 +15,23 @@ export default function Alerts({ devices, token }) {
     from: '', 
     to: '', 
     speedLimit: 80,
-    alertType: 'overspeed' // Tipo de alerta por defecto
+    alertType: 'overspeed' 
   });
   const [quickRange, setQuickRange] = useState('today');
   
   const [alertData, setAlertData] = useState([]);
-  const [routeCoords, setRouteCoords] = useState([]); // Para dibujar la ruta en el mapa
+  const [routeCoords, setRouteCoords] = useState([]); 
   const [isFetching, setIsFetching] = useState(false);
   const [mapCenter, setMapCenter] = useState([4.142, -73.626]);
 
-  // URL ABSOLUTA PARA FUNCIONAMIENTO ONLINE
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
-  // Marcador Dinámico (Cambia de color según el tipo de alerta)
   const createAlertMarker = (title, color) => {
     const html = `
       <div style="display: flex; flex-direction: column; align-items: center; margin-top: -15px;">
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
-        
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
@@ -54,12 +50,9 @@ export default function Alerts({ devices, token }) {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
     const now = new Date(); const start = new Date(now); const end = new Date(now);
-    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
-    }
-    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1);
-    end.setHours(23, 59, 59, 999); }
-    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999); }
+    if (rangeValue === 'today') { start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'yesterday') { start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); end.setDate(end.getDate() - 1); end.setHours(23, 59, 59, 999); }
+    else if (rangeValue === 'thisMonth') { start.setDate(1); start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999); }
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
     setReportConfig({ ...reportConfig, from: format(start), to: format(end) });
   };
@@ -82,90 +75,87 @@ export default function Alerts({ devices, token }) {
       const fromIso = new Date(reportConfig.from).toISOString();
       const toIso = new Date(reportConfig.to).toISOString();
       
-      // Obtenemos las coordenadas para dibujar en el mapa
       const urlRoute = `${BASE_URL}/api/reports/route?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
       const resRoute = await fetch(urlRoute, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
       const routeData = resRoute.ok ? await resRoute.json() : [];
 
       let foundAlerts = [];
 
-      // === LÓGICA DE KILOMETRAJE DIARIO ===
+      // LÓGICA: Kilometraje
       if (reportConfig.alertType === 'daily_mileage') {
         const urlSummary = `${BASE_URL}/api/reports/summary?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resSummary = await fetch(urlSummary, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
         const summaryData = resSummary.ok ? await resSummary.json() : [];
-
         const totalDistance = summaryData.length > 0 ? summaryData[0].distance : 0;
         const km = (totalDistance / 1000).toFixed(2); 
         
         setAlertData([{ 
-          id: 'km-1',
-          type: 'Kilometraje Recorrido', 
-          desc: `Total oficial en el periodo: ${km} km`, 
-          time: new Date(), 
-          lat: routeData.length > 0 ? routeData[0].latitude : null,
-          lon: routeData.length > 0 ? routeData[0].longitude : null,
-          color: '#3B82F6' // Azul
+          id: 'km-1', type: 'Kilometraje Recorrido', desc: `Total oficial en el periodo: ${km} km`, 
+          time: new Date(), lat: routeData.length > 0 ? routeData[0].latitude : null, lon: routeData.length > 0 ? routeData[0].longitude : null, color: '#3B82F6'
         }]);
-
         setRouteCoords(routeData.map(p => [p.latitude, p.longitude]));
-
-        if (routeData.length > 0) {
-          setMapCenter([routeData[0].latitude, routeData[0].longitude]);
-        } else {
-          alert('No hay posiciones registradas para calcular el kilometraje en este rango.');
-        }
-
+        if (routeData.length > 0) setMapCenter([routeData[0].latitude, routeData[0].longitude]);
         setIsFetching(false);
         return;
       }
 
-      // === LÓGICA 1: Exceso de Velocidad General ===
+      // LÓGICA: Exceso de Velocidad General
       if (reportConfig.alertType === 'overspeed') {
         const limit = parseFloat(reportConfig.speedLimit);
         foundAlerts = routeData
           .filter(pos => (pos.speed * 1.852) > limit)
           .map(pos => ({
-            id: pos.id,
-            type: 'Exceso de Velocidad',
-            time: pos.fixTime,
-            lat: pos.latitude,
-            lon: pos.longitude,
-            desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit})`,
-            color: '#EF4444' // Rojo
+            id: pos.id, type: 'Exceso de Velocidad', time: pos.fixTime, lat: pos.latitude, lon: pos.longitude,
+            desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite Global: ${limit})`, color: '#EF4444'
           }));
       } 
-      // === LÓGICA NUEVA: Velocidad dentro de Geocerca ===
+      
+      // LÓGICA NUEVA: Velocidad DENTRO de Geocerca Automática
       else if (reportConfig.alertType === 'geofence_overspeed') {
-        const limit = parseFloat(reportConfig.speedLimit);
-        
-        // Consultar nombres de geocercas en la API para mostrarlo de forma legible
+        // Consultar Geocercas para saber qué límite tiene cada una
         let geofencesMap = {};
         try {
           const resGeo = await fetch(`${BASE_URL}/api/geofences`, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
           if (resGeo.ok) {
             const geofences = await resGeo.json();
-            geofences.forEach(g => { geofencesMap[g.id] = g.name; });
+            geofences.forEach(g => { 
+              // Guardamos en memoria solo el límite de la geocerca configurada
+              geofencesMap[g.id] = { name: g.name, limit: g.attributes?.speedLimitKmh || null }; 
+            });
           }
         } catch (e) { console.warn("No se pudieron cargar las geocercas"); }
 
-        // Filtramos las posiciones donde la velocidad es mayor al límite Y el vehículo está dentro de una o más geocercas
-        foundAlerts = routeData
-          .filter(pos => (pos.speed * 1.852) > limit && pos.geofenceIds && pos.geofenceIds.length > 0)
-          .map(pos => {
-            const geoNames = pos.geofenceIds.map(id => geofencesMap[id] || `Geocerca ID ${id}`).join(', ');
-            return {
+        // Recorremos la ruta. Si la posición tiene ID de geocerca, evaluamos su velocidad contra el límite específico de esa zona.
+        foundAlerts = routeData.reduce((acc, pos) => {
+          if (!pos.geofenceIds || pos.geofenceIds.length === 0) return acc;
+          
+          const speedKmh = pos.speed * 1.852;
+          let triggeredGeofences = [];
+
+          pos.geofenceIds.forEach(id => {
+            const geo = geofencesMap[id];
+            // Si la geocerca tiene límite asignado y el vehículo lo superó
+            if (geo && geo.limit && speedKmh > geo.limit) {
+              triggeredGeofences.push(`${geo.name} (Límite: ${geo.limit} km/h)`);
+            }
+          });
+
+          if (triggeredGeofences.length > 0) {
+            acc.push({
               id: pos.id,
-              type: 'Velocidad en Geocerca',
+              type: 'Infracción en Zona',
               time: pos.fixTime,
               lat: pos.latitude,
               lon: pos.longitude,
-              desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit}) en zona: ${geoNames}`,
-              color: '#F97316' // Naranja vibrante para diferenciarlo
-            };
-          });
+              desc: `${speedKmh.toFixed(1)} km/h en: ${triggeredGeofences.join(', ')}`,
+              color: '#F97316' // Naranja
+            });
+          }
+          return acc;
+        }, []);
       }
-      // === LÓGICA 2: Eventos Nativos de Traccar ===
+      
+      // LÓGICA: Eventos Nativos (Entrada/Salida, Motor, Alarmas, etc)
       else {
         const urlEvents = `${BASE_URL}/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
         const resEvents = await fetch(urlEvents, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
@@ -178,96 +168,54 @@ export default function Alerts({ devices, token }) {
         
         foundAlerts = filteredEvents.map(ev => {
           const pos = posMap[ev.positionId] || {}; 
-          
-          let title = 'Evento';
-          let desc = 'Registrado por el sistema';
-          let color = '#F59E0B'; 
+          let title = 'Evento'; let desc = 'Registrado por el sistema'; let color = '#F59E0B'; 
 
           if (ev.type === 'ignitionOn') { title = 'Motor Encendido'; desc = 'El vehículo fue encendido'; color = '#10B981'; } 
           if (ev.type === 'ignitionOff') { title = 'Motor Apagado'; desc = 'El vehículo fue apagado'; color = '#8B5CF6'; } 
           if (ev.type === 'deviceOffline') { title = 'Desconexión'; desc = 'Pérdida de señal de datos'; color = '#6B7280'; } 
           if (ev.type === 'alarm') { title = 'Alarma'; desc = ev.attributes?.alarm || 'Alarma general detectada'; color = '#EF4444'; } 
           if (ev.type === 'deviceStopped') { title = 'Parada'; desc = 'El vehículo se detuvo'; color = '#3B82F6'; } 
-          if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'El vehículo ingresó a una geocerca'; color = '#059669'; } 
-          if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'El vehículo salió de una geocerca'; color = '#D97706'; } 
+          if (ev.type === 'geofenceEnter') { title = 'Entrada a Zona'; desc = 'Ingresó a una geocerca controlada'; color = '#059669'; } 
+          if (ev.type === 'geofenceExit') { title = 'Salida de Zona'; desc = 'Salió de la geocerca controlada'; color = '#D97706'; } 
 
           return {
-            id: ev.id,
-            type: title,
-            time: ev.eventTime || ev.serverTime || ev.fixTime,
-            lat: pos.latitude, 
-            lon: pos.longitude,
-            desc: desc,
-            color: color
+            id: ev.id, type: title, time: ev.eventTime || ev.serverTime || ev.fixTime,
+            lat: pos.latitude, lon: pos.longitude, desc: desc, color: color
           };
         });
       }
       
       setAlertData(foundAlerts);
-      
       const firstValidAlert = foundAlerts.find(a => a.lat && a.lon);
-      if (firstValidAlert) {
-        setMapCenter([firstValidAlert.lat, firstValidAlert.lon]);
-      } else if (foundAlerts.length > 0) {
-        alert('Se encontraron alertas, pero no reportaron coordenadas exactas (ej: desconexiones bruscas). Revise la tabla.');
-      } else {
-        alert('No se encontraron alertas de este tipo en el rango seleccionado.');
-      }
+      
+      if (firstValidAlert) { setMapCenter([firstValidAlert.lat, firstValidAlert.lon]); } 
+      else if (foundAlerts.length > 0) { alert('Se encontraron alertas, pero no reportaron coordenadas exactas (ej: desconexiones bruscas). Revise la tabla.'); } 
+      else { alert('No se encontraron alertas de este tipo en el rango seleccionado.'); }
 
     } catch (err) { 
-      console.error(err); 
-      alert("Error al conectarse con el servidor de Traccar.");
+      console.error(err); alert("Error al conectarse con el servidor de Traccar.");
     }
-    
     setIsFetching(false);
   };
 
   return (
     <main className="alerts-main" style={{display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', padding: '20px 30px', boxSizing: 'border-box'}}>
-      
-      {/* MAGIA RESPONSIVE: Inyectamos los media queries para adaptar la pantalla en móviles */}
       <style>
         {`
           @media (max-width: 768px) {
-            .alerts-main {
-              padding: 15px 10px !important;
-              height: calc(100vh - 60px) !important; 
-            }
-            .filter-container {
-              flex-direction: column !important;
-              align-items: stretch !important;
-            }
-            .filter-item {
-              width: 100% !important;
-              min-width: 100% !important;
-            }
-            .alerts-content-wrapper {
-              flex-direction: column !important;
-              overflow-y: auto !important;
-              flex: 1 !important;
-            }
-            .alerts-map-box {
-              flex: none !important;
-              width: 100% !important;
-              height: 350px !important;
-              min-height: 350px !important;
-            }
-            .alerts-table-box {
-              flex: 1 !important;
-              width: 100% !important;
-              min-height: 250px !important; 
-            }
-            .btn-submit {
-              width: 100% !important;
-              margin-top: 10px !important;
-            }
+            .alerts-main { padding: 15px 10px !important; height: calc(100vh - 60px) !important; }
+            .filter-container { flex-direction: column !important; align-items: stretch !important; }
+            .filter-item { width: 100% !important; min-width: 100% !important; }
+            .alerts-content-wrapper { flex-direction: column !important; overflow-y: auto !important; flex: 1 !important; }
+            .alerts-map-box { flex: none !important; width: 100% !important; height: 350px !important; min-height: 350px !important; }
+            .alerts-table-box { flex: 1 !important; width: 100% !important; min-height: 250px !important; }
+            .btn-submit { width: 100% !important; margin-top: 10px !important; }
           }
         `}
       </style>
 
       <h2 style={{color:'white', margin:'0 0 20px 0', flexShrink: 0}}>Centro de Alertas y Eventos</h2>
       
-      {/* PANEL DE FILTROS */}
       <div style={{...styles.adminCard, flexShrink: 0}}>
         <form onSubmit={handleFetchAlerts} className="filter-container" style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
@@ -282,22 +230,21 @@ export default function Alerts({ devices, token }) {
           <div className="filter-item" style={{flex: 1, minWidth: '180px'}}>
             <label style={styles.label}>Tipo de Alerta:</label>
             <select value={reportConfig.alertType} onChange={e => setReportConfig({...reportConfig, alertType: e.target.value})} style={styles.input}>
-              <option value="overspeed">⚡ Exceso de Velocidad</option>
-              {/* === NUEVA OPCIÓN AÑADIDA === */}
-              <option value="geofence_overspeed">🚧 Velocidad en Geocerca</option>
+              <option value="overspeed">⚡ Exceso de Vel. Global</option>
+              <option value="geofence_overspeed">🚧 Infracción Vel. en Geocerca</option>
               <option value="daily_mileage">📏 Kilometraje Diario</option>
+              <option value="geofenceEnter">🌐 Entrada a Geocerca</option>
+              <option value="geofenceExit">⭕ Salida de Geocerca</option>
               <option value="ignitionOn">🟢 Motor Encendido</option>
               <option value="ignitionOff">🟣 Motor Apagado</option>
               <option value="deviceStopped">🔵 Paradas</option>
               <option value="deviceOffline">⚪ Desconexión de Señal</option>
               <option value="alarm">🚨 Alarmas (SOS/Corte)</option>
-              <option value="geofenceEnter">🌐 Entrada a Geocerca</option>
-              <option value="geofenceExit">⭕ Salida de Geocerca</option>
             </select>
           </div>
 
-          {/* === CONDICIONAL ACTUALIZADO PARA MOSTRAR EL CAMPO LÍMITE === */}
-          {(reportConfig.alertType === 'overspeed' || reportConfig.alertType === 'geofence_overspeed') && (
+          {/* Ocultamos el campo de Límite manual si seleccionan "Velocidad en Geocerca" porque ahora es automático */}
+          {reportConfig.alertType === 'overspeed' && (
             <div className="filter-item" style={{width: '100px', minWidth: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -324,27 +271,17 @@ export default function Alerts({ devices, token }) {
           <button type="submit" disabled={isFetching} className="filter-item btn-submit" style={styles.btn}>
             {isFetching ? 'Analizando...' : '🚨 Extraer Alertas'}
           </button>
-
         </form>
       </div>
 
-      {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
       <div className="alerts-content-wrapper" style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, overflow: 'hidden' }}>
-        
-        {/* MAPA DE ALERTAS */}
         <div className="alerts-map-box" style={{...styles.mapContainer, flex: 2, position: 'relative'}}>
           <MapContainer center={mapCenter} zoom={13} style={{ height: '100%', width: '100%', zIndex: 0 }}>
             <ChangeView center={mapCenter} />
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />            
-            
-            {/* Dibuja la línea de kilometraje si hay coordenadas */}
-            {routeCoords.length > 0 && (
-              <Polyline positions={routeCoords} color="#3B82F6" weight={5} opacity={0.7} />
-            )}
-
+            {routeCoords.length > 0 && <Polyline positions={routeCoords} color="#3B82F6" weight={5} opacity={0.7} />}
             {alertData.map((alert, index) => {
               if (!alert.lat || !alert.lon) return null;
-              
               return (
                 <Marker 
                   key={index} 
@@ -354,7 +291,7 @@ export default function Alerts({ devices, token }) {
                 >
                   <Popup>
                     <b style={{color: alert.color, fontSize: '14px'}}>{alert.type}</b><br/>
-                    <span style={{color:'#111827'}}><b>Fecha:</b> {alert.time ? new Date(alert.time).toLocaleString() : 'Fecha no disponible'}</span><br/>
+                    <span style={{color:'#111827'}}><b>Fecha:</b> {alert.time ? new Date(alert.time).toLocaleString() : 'Desconocida'}</span><br/>
                     <span style={{color:'#6B7280'}}><b>Detalle:</b> {alert.desc}</span>
                   </Popup>
                 </Marker>
@@ -363,15 +300,11 @@ export default function Alerts({ devices, token }) {
           </MapContainer>
         </div>
 
-        {/* TABLA DE RESULTADOS */}
         <div className="alerts-table-box" style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
-          
           <div style={{ overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
             {alertData.length === 0 ? (
-              <p style={{ color: '#6B7280', fontSize: '13px', textAlign: 'center', marginTop: '40px' }}>
-                No hay alertas para mostrar.
-              </p>
+              <p style={{ color: '#6B7280', fontSize: '13px', textAlign: 'center', marginTop: '40px' }}>No hay alertas para mostrar.</p>
             ) : (
               <table style={styles.table}>
                 <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
@@ -402,7 +335,6 @@ export default function Alerts({ devices, token }) {
             )}
           </div>
         </div>
-
       </div>
     </main>
   );

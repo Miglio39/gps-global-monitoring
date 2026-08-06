@@ -9,7 +9,7 @@ const MapClickHandler = ({ onMapClick }) => {
     },
   });
   return null;
-};
+}
 
 export default function Geofences() {
   const [geofences, setGeofences] = useState([]);
@@ -21,6 +21,10 @@ export default function Geofences() {
   const [radius, setRadius] = useState(300);
   const [center, setCenter] = useState(null);
   const [selectedDevice, setSelectedDevice] = useState('ALL'); 
+  
+  // NUEVO: Control del tipo de geocerca y límite de velocidad
+  const [geoMode, setGeoMode] = useState('entry_exit'); 
+  const [speedLimit, setSpeedLimit] = useState(40);
 
   const BASE_URL = 'https://api.globalmonitorgps.com/api';
   const token = localStorage.getItem('traccar_token');
@@ -65,11 +69,21 @@ export default function Geofences() {
       ? 'Todos los vehículos' 
       : devices?.find(d => d.id === Number(selectedDevice))?.name || 'Vehículo específico';
 
+    // NUEVO: Generamos la descripción y atributos dinámicamente según el modo
+    const isSpeedMode = geoMode === 'speed';
+    const description = isSpeedMode 
+      ? `Límite: ${speedLimit} km/h | Vehículo: ${carName}` 
+      : `Entrada y Salida | Vehículo: ${carName}`;
+
     const geofencePayload = {
       name: name,
-      description: `Asignado a: ${carName}`, 
+      description: description, 
       area: areaWKT,
-      attributes: { assignedTo: carName }
+      attributes: { 
+        assignedTo: carName,
+        mode: geoMode,
+        speedLimitKmh: isSpeedMode ? speedLimit : null // Guardamos el límite aquí
+      }
     };
 
     try {
@@ -105,6 +119,7 @@ export default function Geofences() {
         setCenter(null);
         setRadius(300);
         setSelectedDevice('ALL');
+        setGeoMode('entry_exit');
         fetchData(); 
       } else {
         alert('❌ Error en el servidor al intentar registrar la geocerca.');
@@ -136,8 +151,7 @@ export default function Geofences() {
 
   const getAssignedName = (geo) => {
     if (geo.attributes?.assignedTo) return geo.attributes.assignedTo;
-    if (geo.description && geo.description.includes('Asignado a:')) return geo.description.replace('Asignado a: ', '');
-    return 'Todos los vehículos'; 
+    return 'Vehículo/s'; 
   };
 
   return (
@@ -150,7 +164,7 @@ export default function Geofences() {
         .geo-subtitle { font-size: 12px; color: #6B7280; margin: 0; }
         .geo-form { background-color: #0B1120; border: 1px solid #1F2937; padding: 15px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; }
         .geo-input { background-color: #111827; border: 1px solid #1F2937; border-radius: 6px; padding: 8px 12px; color: #FFFFFF; font-size: 13px; outline: none; transition: border 0.2s ease; width: 100%; box-sizing: border-box; }
-        .geo-label { font-size: 12px; color: #9CA3AF; display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .geo-label { font-size: 12px; color: #9CA3AF; display: flex; justify-content: space-between; margin-bottom: 4px; font-weight: bold; }
         .geo-slider { width: 100%; accent-color: #2563EB; cursor: pointer; margin: 4px 0; }
         .geo-status-box { font-size: 12px; padding: 8px; border-radius: 6px; text-align: center; font-weight: 500; }
         .status-waiting { background-color: rgba(245, 158, 11, 0.1); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.2); }
@@ -164,8 +178,6 @@ export default function Geofences() {
         .geo-card-name { font-size: 13px; font-weight: 600; color: #E5E7EB; }
         .geo-card-desc { font-size: 11px; color: #4B5563; margin-top: 2px; }
         .geo-btn-delete { background: transparent; border: none; color: #EF4444; cursor: pointer; font-size: 14px; padding: 4px; border-radius: 4px; }
-
-        /* MAGIA RESPONSIVA */
         @media (max-width: 768px) {
           .geo-layout { flex-direction: column-reverse; overflow-y: auto; }
           .geo-panel { width: 100%; height: auto; border-right: none; border-top: 1px solid #1F2937; padding: 15px; }
@@ -182,7 +194,7 @@ export default function Geofences() {
 
           <form onSubmit={handleSaveGeofence} className="geo-form">
             <div>
-              <label className="geo-label">Asignar a:</label>
+              <label className="geo-label">1. Vehículo Autorizado:</label>
               <select value={selectedDevice} onChange={(e) => setSelectedDevice(e.target.value)} className="geo-input">
                 <option value="ALL">🚗 Todos los vehículos de la flota</option>
                 <optgroup label="Vehículos Específicos">
@@ -193,12 +205,30 @@ export default function Geofences() {
               </select>
             </div>
 
-            <input type="text" placeholder="Nombre de la geocerca..." value={name} onChange={(e) => setName(e.target.value)} className="geo-input" required />
+            <div>
+              <label className="geo-label">2. Tipo de Control:</label>
+              <select value={geoMode} onChange={(e) => setGeoMode(e.target.value)} className="geo-input" style={{borderColor: geoMode==='speed'?'#F97316':'#1F2937'}}>
+                <option value="entry_exit">📍 Sólo Entrada y Salida</option>
+                <option value="speed">🚀 Velocidad Máxima en Zona</option>
+              </select>
+            </div>
+
+            {geoMode === 'speed' && (
+              <div>
+                <label className="geo-label" style={{color: '#F97316'}}>Límite Permitido (km/h):</label>
+                <input type="number" value={speedLimit} onChange={(e) => setSpeedLimit(Number(e.target.value))} className="geo-input" min="5" max="200" required />
+              </div>
+            )}
+
+            <div>
+              <label className="geo-label">3. Nombre de la Geocerca:</label>
+              <input type="text" placeholder="Ej: Base Sur, Zona 1..." value={name} onChange={(e) => setName(e.target.value)} className="geo-input" required />
+            </div>
 
             <div>
               <div className="geo-label">
-                <span>Radio asignado</span>
-                <span style={{ color: '#2563EB', fontWeight: 'bold' }}>
+                <span>4. Tamaño del Área:</span>
+                <span style={{ color: '#2563EB' }}>
                   {radius >= 1000 ? `${(radius / 1000).toFixed(1)} km` : `${radius} m`}
                 </span>
               </div>
@@ -212,7 +242,7 @@ export default function Geofences() {
             )}
 
             <button type="submit" disabled={!center || !name.trim() || isSaving} className="geo-btn-submit">
-              {isSaving ? 'Vinculando...' : 'Guardar zona'}
+              {isSaving ? 'Guardando...' : 'Guardar Zona Geográfica'}
             </button>
           </form>
 
@@ -225,15 +255,18 @@ export default function Geofences() {
               )}
               {geofences.map((geo) => {
                 const circleInfo = parseWKTtoCircle(geo.area);
-                const assignedName = getAssignedName(geo);
+                const isSpeed = geo.attributes?.mode === 'speed';
                 return (
-                  <div key={geo.id} className="geo-card">
+                  <div key={geo.id} className="geo-card" style={{borderLeft: isSpeed ? '3px solid #F97316' : '3px solid #10B981'}}>
                     <div className="geo-card-info">
                       <span className="geo-card-name">{geo.name}</span>
                       <span className="geo-card-desc">
-                        {circleInfo ? (circleInfo.radius >= 1000 ? `Radio: ${(circleInfo.radius / 1000).toFixed(1)}km` : `Radio: ${circleInfo.radius}m`) : 'Área poligonal'}
+                        {circleInfo ? (circleInfo.radius >= 1000 ? `Radio: ${(circleInfo.radius / 1000).toFixed(1)}km` : `Radio: ${circleInfo.radius}m`) : 'Polígono'}
                       </span>
-                      <span style={{ fontSize: '10px', color: '#3B82F6', marginTop: '4px', fontWeight: '700' }}>🎯 {assignedName}</span>
+                      <span style={{ fontSize: '10px', color: isSpeed ? '#F97316' : '#10B981', marginTop: '4px', fontWeight: '700' }}>
+                        {isSpeed ? `🚀 Límite: ${geo.attributes.speedLimitKmh} km/h` : '📍 Control Entrada/Salida'}
+                      </span>
+                      <span style={{ fontSize: '10px', color: '#6B7280', marginTop: '2px' }}>🎯 {getAssignedName(geo)}</span>
                     </div>
                     <button type="button" onClick={() => handleDeleteGeofence(geo.id)} className="geo-btn-delete" title="Eliminar geocerca">🗑️</button>
                   </div>
@@ -249,15 +282,20 @@ export default function Geofences() {
             <MapClickHandler onMapClick={setCenter} />
             {geofences.map((geo) => {
               const circleData = parseWKTtoCircle(geo.area);
-              const assignedName = getAssignedName(geo);
+              const isSpeed = geo.attributes?.mode === 'speed';
+              const color = isSpeed ? '#F97316' : '#10B981';
+              
               if (circleData) {
                 return (
-                  <Circle key={geo.id} center={[circleData.lat, circleData.lng]} radius={circleData.radius} pathOptions={{ color: '#2563EB', fillColor: '#2563EB', fillOpacity: 0.25, weight: 2 }}>
+                  <Circle key={geo.id} center={[circleData.lat, circleData.lng]} radius={circleData.radius} pathOptions={{ color: color, fillColor: color, fillOpacity: 0.25, weight: 2 }}>
                     <Popup>
                       <div style={{ color: '#111827', fontFamily: 'sans-serif' }}>
                         <strong style={{ fontSize: '13px' }}>{geo.name}</strong><br/>
                         <span style={{ fontSize: '11px', color: '#6B7280' }}>Radio: {circleData.radius >= 1000 ? `${(circleData.radius / 1000).toFixed(1)} km` : `${circleData.radius} m`}</span><br/>
-                        <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 'bold', display: 'block', marginTop: '3px' }}>🎯 {assignedName}</span>
+                        <span style={{ fontSize: '11px', color: color, fontWeight: 'bold', display: 'block', marginTop: '3px' }}>
+                          {isSpeed ? `🚀 Velocidad Máx: ${geo.attributes.speedLimitKmh} km/h` : '📍 Entrada / Salida'}
+                        </span>
+                        <span style={{ fontSize: '10px', color: '#4B5563', display: 'block', marginTop: '3px' }}>🎯 {getAssignedName(geo)}</span>
                       </div>
                     </Popup>
                   </Circle>
@@ -265,7 +303,7 @@ export default function Geofences() {
               }
               return null;
             })}
-            {center && <Circle center={center} radius={radius} pathOptions={{ color: '#10B981', fillColor: '#10B981', fillOpacity: 0.4, dashArray: '6, 6', weight: 2 }} />}
+            {center && <Circle center={center} radius={radius} pathOptions={{ color: '#2563EB', fillColor: '#2563EB', fillOpacity: 0.4, dashArray: '6, 6', weight: 2 }} />}
           </MapContainer>
         </div>
       </div>
