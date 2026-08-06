@@ -166,6 +166,7 @@ export default function DeviceManagement({ token, devices }) {
                 <option value="5013">SinoTrack / Boxtrack (5013)</option>
                 <option value="5023">Concox / Jimi IoT (5023)</option>
                 <option value="5027">Teltonika (5027)</option>
+                <option value="5039">Queclink (5039)</option>
                 <option value="5053">Protrack V2 / Nueva Generación (5053)</option>
                 <option value="5159">Protrack V1 / Huabao (5159)</option>
             </select>
@@ -245,6 +246,7 @@ export default function DeviceManagement({ token, devices }) {
                           if (p === 5013) marcaTexto = 'SinoTrack (5013)';
                           if (p === 5023) marcaTexto = 'Concox (5023)';
                           if (p === 5027) marcaTexto = 'Teltonika (5027)';
+                          if (p === 5039) marcaTexto = 'Queclink (5039)';
                           if (p === 5053) marcaTexto = 'Protrack V2 (5053)';
                           if (p === 5159) marcaTexto = 'Protrack V1 (5159)';
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
