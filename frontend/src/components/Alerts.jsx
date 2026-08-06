@@ -35,7 +35,7 @@ export default function Alerts({ devices, token }) {
         <span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 3px;">
           ${title}
         </span>
-       
+        
         <div style="width: 14px; height: 14px; background: white; border: 3px solid ${color}; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
           <div style="width: 4px; height: 4px; background: ${color}; border-radius: 50%;"></div>
         </div>
@@ -120,7 +120,7 @@ export default function Alerts({ devices, token }) {
         return;
       }
 
-      // === LÓGICA 1: Exceso de Velocidad ===
+      // === LÓGICA 1: Exceso de Velocidad General ===
       if (reportConfig.alertType === 'overspeed') {
         const limit = parseFloat(reportConfig.speedLimit);
         foundAlerts = routeData
@@ -135,6 +135,36 @@ export default function Alerts({ devices, token }) {
             color: '#EF4444' // Rojo
           }));
       } 
+      // === LÓGICA NUEVA: Velocidad dentro de Geocerca ===
+      else if (reportConfig.alertType === 'geofence_overspeed') {
+        const limit = parseFloat(reportConfig.speedLimit);
+        
+        // Consultar nombres de geocercas en la API para mostrarlo de forma legible
+        let geofencesMap = {};
+        try {
+          const resGeo = await fetch(`${BASE_URL}/api/geofences`, { headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' } });
+          if (resGeo.ok) {
+            const geofences = await resGeo.json();
+            geofences.forEach(g => { geofencesMap[g.id] = g.name; });
+          }
+        } catch (e) { console.warn("No se pudieron cargar las geocercas"); }
+
+        // Filtramos las posiciones donde la velocidad es mayor al límite Y el vehículo está dentro de una o más geocercas
+        foundAlerts = routeData
+          .filter(pos => (pos.speed * 1.852) > limit && pos.geofenceIds && pos.geofenceIds.length > 0)
+          .map(pos => {
+            const geoNames = pos.geofenceIds.map(id => geofencesMap[id] || `Geocerca ID ${id}`).join(', ');
+            return {
+              id: pos.id,
+              type: 'Velocidad en Geocerca',
+              time: pos.fixTime,
+              lat: pos.latitude,
+              lon: pos.longitude,
+              desc: `${(pos.speed * 1.852).toFixed(1)} km/h (Límite: ${limit}) en zona: ${geoNames}`,
+              color: '#F97316' // Naranja vibrante para diferenciarlo
+            };
+          });
+      }
       // === LÓGICA 2: Eventos Nativos de Traccar ===
       else {
         const urlEvents = `${BASE_URL}/api/reports/events?deviceId=${reportConfig.deviceId}&from=${fromIso}&to=${toIso}`;
@@ -193,8 +223,6 @@ export default function Alerts({ devices, token }) {
   };
 
   return (
-    // CAMBIO CLAVE 1: Ajustamos el contenedor principal para que ocupe exactamente la altura de la ventana
-    // y maneje su propio scroll interno sin empujar el layout de la app
     <main className="alerts-main" style={{display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', padding: '20px 30px', boxSizing: 'border-box'}}>
       
       {/* MAGIA RESPONSIVE: Inyectamos los media queries para adaptar la pantalla en móviles */}
@@ -203,7 +231,6 @@ export default function Alerts({ devices, token }) {
           @media (max-width: 768px) {
             .alerts-main {
               padding: 15px 10px !important;
-              /* Aseguramos que en móvil el contenedor deje espacio para barras de navegación si las hay */
               height: calc(100vh - 60px) !important; 
             }
             .filter-container {
@@ -216,7 +243,6 @@ export default function Alerts({ devices, token }) {
             }
             .alerts-content-wrapper {
               flex-direction: column !important;
-              /* En móviles permitimos que el contenedor haga scroll si el contenido es muy alto */
               overflow-y: auto !important;
               flex: 1 !important;
             }
@@ -227,9 +253,9 @@ export default function Alerts({ devices, token }) {
               min-height: 350px !important;
             }
             .alerts-table-box {
-              flex: 1 !important; /* La tabla debe tomar el resto del espacio disponible */
+              flex: 1 !important;
               width: 100% !important;
-              min-height: 250px !important; /* Aseguramos un mínimo para la tabla */
+              min-height: 250px !important; 
             }
             .btn-submit {
               width: 100% !important;
@@ -257,6 +283,8 @@ export default function Alerts({ devices, token }) {
             <label style={styles.label}>Tipo de Alerta:</label>
             <select value={reportConfig.alertType} onChange={e => setReportConfig({...reportConfig, alertType: e.target.value})} style={styles.input}>
               <option value="overspeed">⚡ Exceso de Velocidad</option>
+              {/* === NUEVA OPCIÓN AÑADIDA === */}
+              <option value="geofence_overspeed">🚧 Velocidad en Geocerca</option>
               <option value="daily_mileage">📏 Kilometraje Diario</option>
               <option value="ignitionOn">🟢 Motor Encendido</option>
               <option value="ignitionOff">🟣 Motor Apagado</option>
@@ -268,7 +296,8 @@ export default function Alerts({ devices, token }) {
             </select>
           </div>
 
-          {reportConfig.alertType === 'overspeed' && (
+          {/* === CONDICIONAL ACTUALIZADO PARA MOSTRAR EL CAMPO LÍMITE === */}
+          {(reportConfig.alertType === 'overspeed' || reportConfig.alertType === 'geofence_overspeed') && (
             <div className="filter-item" style={{width: '100px', minWidth: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={reportConfig.speedLimit} onChange={e => setReportConfig({...reportConfig, speedLimit: e.target.value})} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -300,7 +329,6 @@ export default function Alerts({ devices, token }) {
       </div>
 
       {/* CONTENEDOR DIVIDIDO: MAPA Y TABLA */}
-      {/* CAMBIO CLAVE 2: Aseguramos que este contenedor tome el espacio restante sin desbordar */}
       <div className="alerts-content-wrapper" style={{ display: 'flex', gap: '20px', marginTop: '20px', flex: 1, overflow: 'hidden' }}>
         
         {/* MAPA DE ALERTAS */}
@@ -336,7 +364,6 @@ export default function Alerts({ devices, token }) {
         </div>
 
         {/* TABLA DE RESULTADOS */}
-        {/* CAMBIO CLAVE 3: Aseguramos que la tabla pueda hacer scroll internamente */}
         <div className="alerts-table-box" style={{...styles.tableContainer, flex: 1, marginTop: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
           <h3 style={styles.tableTitle}>Registro de Eventos ({alertData.length})</h3>
           
