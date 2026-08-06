@@ -96,7 +96,6 @@ export default function Reports({ devices, token }) {
     return `${hours}h ${minutes}m`;
   };
 
-  // Identificador de fechas absolutas inmune a desfases horarios
   const getSafeDateKey = (isoString) => {
     const d = new Date(isoString);
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -119,10 +118,8 @@ export default function Reports({ devices, token }) {
 
         if (resSummary.ok) {
             let summary = await resSummary.json();
-            // Estado -1 inicial para gatillar la animación de "Calculando..." en la celda
             setSummaryData(summary.map(day => ({ ...day, realMaxSpeed: -1 })));
             
-            // Extracción matemática de la velocidad máxima real punto por punto
             fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
                 .then(res => res.ok ? res.json() : [])
                 .then(route => {
@@ -152,7 +149,8 @@ export default function Reports({ devices, token }) {
                 });
         }
       } 
-      else if (reportType === 'route') {
+      // ---> AQUÍ AGRUPAMOS ROUTE Y ECOPETROL PARA REUSAR LA PETICIÓN <---
+      else if (reportType === 'route' || reportType === 'ecopetrol') {
         const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) setRouteData(await res.json());
       }
@@ -171,10 +169,9 @@ export default function Reports({ devices, token }) {
             })));
         }
       }
-      // ---> NUEVO: INFORME DE EXCESO DE VELOCIDAD POR FLOTA COMPLETA <---
       else if (reportType === 'fleet_speed') {
         const allEvents = [];
-        const chunkSize = 10; // Procesa 10 vehículos a la vez para no colapsar el servidor Traccar
+        const chunkSize = 10; 
 
         for (let i = 0; i < devices.length; i += chunkSize) {
             const chunk = devices.slice(i, i + chunkSize);
@@ -186,7 +183,7 @@ export default function Reports({ devices, token }) {
                         const overspeed = route.filter(pos => (pos.speed * 1.852) > speedLimit);
                         return overspeed.map(pos => ({
                             id: pos.id,
-                            deviceName: device.name, // Clave: Guardamos el nombre/placa del vehículo
+                            deviceName: device.name, 
                             serverTime: pos.fixTime,
                             type: 'overspeed',
                             speed: pos.speed,
@@ -194,13 +191,12 @@ export default function Reports({ devices, token }) {
                             longitude: pos.longitude
                         }));
                     })
-                    .catch(() => []); // Ignorar vehículos con error
+                    .catch(() => []); 
             });
             const chunkResults = await Promise.all(promises);
             allEvents.push(...chunkResults.flat());
         }
         
-        // Ordenamos todos los eventos de la flota del más reciente al más antiguo
         allEvents.sort((a, b) => new Date(b.serverTime) - new Date(a.serverTime));
         setEventsData(allEvents);
       }
@@ -333,7 +329,6 @@ export default function Reports({ devices, token }) {
     setIsFetching(false);
   };
 
-  // EXPORTADOR EXCEL REESTRUCTURADO (INCLUYE FLOTA)
   const handleDownloadExcel = () => {
     if (isFetching) {
       return alert("Por favor espera a que termine de cargar el informe para exportarlo.");
@@ -341,22 +336,20 @@ export default function Reports({ devices, token }) {
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
     
-    // Título dinámico para la Placa o la Flota
     const placaVehiculo = reportType === 'fleet_speed' ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
 
-    // Título dinámico del Tipo de Reporte
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
     if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO CONSOLIDADO";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
+    else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; // Título Excel Ecopetrol
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
     else if (reportType === 'fleet_speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (TODA LA FLOTA)";
     else if (reportType === 'harsh') nombreReporteMayus = "INFORME DE ACELERACIONES Y FRENADAS BRUSCAS";
     else if (reportType === 'idle') nombreReporteMayus = "INFORME DE TIEMPOS EN RALENTÍ";
     else if (reportType === 'stops') nombreReporteMayus = "INFORME DE VEHÍCULOS DETENIDOS (PARADAS)";
 
-    // Inyección de la plantilla que fuerza el formateo nativo de las celdas en Excel
     let htmlTemplate = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/><style>
@@ -432,6 +425,44 @@ export default function Reports({ devices, token }) {
             <td>${ignition}</td>
             <td>${speed}</td>
             <td>${battery}</td>
+            <td>${address}</td>
+          </tr>
+        `;
+      });
+    }
+    // ---> INYECCIÓN EXCEL: INFORME ECOPETROL <---
+    else if (reportType === 'ecopetrol') {
+      if (routeData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>PLACA</b></th>
+          <th><b>FECHA</b></th>
+          <th><b>HORA</b></th>
+          <th><b>VELOCIDAD (KM/H)</b></th>
+          <th><b>ODÓMETRO (KM)</b></th>
+          <th><b>LATITUD</b></th>
+          <th><b>LONGITUD</b></th>
+          <th><b>UBICACIÓN</b></th>
+        </tr>
+      `;
+      routeData.forEach(pos => {
+        const dt = new Date(pos.fixTime);
+        const fecha = dt.toLocaleDateString();
+        const hora = dt.toLocaleTimeString();
+        const placa = selectedDevice ? selectedDevice.name : (devices.find(d => String(d.id) === String(pos.deviceId))?.name || 'Desconocido');
+        const speed = (pos.speed * 1.852).toFixed(1).replace('.', ',');
+        const odometer = ((pos.attributes?.totalDistance || pos.attributes?.odometer || 0) / 1000).toFixed(2).replace('.', ',');
+        const address = pos.address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`;
+        
+        htmlTemplate += `
+          <tr>
+            <td>${placa}</td>
+            <td>${fecha}</td>
+            <td>${hora}</td>
+            <td>${speed}</td>
+            <td>${odometer}</td>
+            <td>${pos.latitude.toFixed(5)}</td>
+            <td>${pos.longitude.toFixed(5)}</td>
             <td>${address}</td>
           </tr>
         `;
@@ -534,7 +565,6 @@ export default function Reports({ devices, token }) {
       <div style={styles.adminCard}>
         <form onSubmit={handleFetchData} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
-          {/* SELECTOR INTELIGENTE: SE DESACTIVA SI ELIGES REPORTE DE FLOTA */}
           <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
             <select 
@@ -558,8 +588,9 @@ export default function Reports({ devices, token }) {
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <option value="daily">Resumen Diario</option>
                 <option value="route">Detallado Punto a Punto</option>
+                {/* NUEVO INFORME ECOPETROL AÑADIDO AL SELECTOR */}
+                <option value="ecopetrol">Informe Completo Ecopetrol</option>
                 <option value="speed">Exceso de Velocidad (Individual)</option>
-                {/* NUEVO REPORTE */}
                 <option value="fleet_speed">Exceso de Velocidad (Toda la Flota)</option>
                 <option value="harsh">Aceleración y Frenada Brusca</option>
                 <option value="idle">Tiempo en Ralentí</option>
@@ -659,7 +690,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 2. TABLA: DETALLADO PUNTO A PUNTO */}
+        {/* 2. TABLA: DETALLADO PUNTO A PUNTO (EL NORMAL) */}
         {reportType === 'route' && (
           <>
             <h3 style={styles.tableTitle}>Detallado Punto a Punto ({routeData.length} puntos extraídos)</h3>
@@ -701,6 +732,60 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
+        {/* ---> TABLA NUEVA: INFORME COMPLETO ECOPETROL <--- */}
+        {reportType === 'ecopetrol' && (
+          <>
+            <h3 style={styles.tableTitle}>Informe Completo de Ecopetrol ({routeData.length} registros extraídos)</h3>
+            <div style={{maxHeight: '500px', overflowY: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        <th>Placa</th>
+                        <th>Fecha</th>
+                        <th>Hora</th>
+                        <th>Velocidad (km/h)</th>
+                        <th>Odómetro (km)</th>
+                        <th>Latitud</th>
+                        <th>Longitud</th>
+                        <th>Ubicación</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {routeData.length === 0 ? <tr><td colSpan="8" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
+                  routeData.slice(0, 3000).map((pos) => { 
+                    const speed = (pos.speed * 1.852).toFixed(1);
+                    const dt = new Date(pos.fixTime);
+                    
+                    // Extraemos placa usando el array de dispositivos y el ID de este punto.
+                    const placa = devices.find(d => String(d.id) === String(pos.deviceId))?.name || 'Desconocido';
+                    // Traccar aloja el kilometraje en atributos en metros, se divide en 1000.
+                    const odometer = ((pos.attributes?.totalDistance || pos.attributes?.odometer || 0) / 1000).toFixed(2);
+                    const address = pos.address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`;
+
+                    return (
+                      <tr key={pos.id} style={{ borderBottom: '1px solid #1F2937' }}>
+                        <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{placa}</td>
+                        <td style={styles.td}>{dt.toLocaleDateString()}</td>
+                        <td style={styles.td}>{dt.toLocaleTimeString()}</td>
+                        <td style={{...styles.td, color: speed > 80 ? '#EF4444' : '#F3F4F6', fontWeight: speed > 80 ? 'bold' : 'normal'}}>
+                          {speed}
+                        </td>
+                        <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{odometer}</td>
+                        <td style={styles.td}>{pos.latitude.toFixed(5)}</td>
+                        <td style={styles.td}>{pos.longitude.toFixed(5)}</td>
+                        <td style={{...styles.td, fontSize: '11px', maxWidth: '250px', whiteSpace: 'normal'}}>
+                          {address}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {routeData.length > 3000 && <tr><td colSpan="8" style={{...styles.emptyText, color: '#F59E0B'}}>Se muestran los primeros 3000 registros para evitar sobrecarga del navegador.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         {/* 3 & 4. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
         {(reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') && (
           <>
@@ -709,7 +794,6 @@ export default function Reports({ devices, token }) {
               <table style={styles.table}>
                 <thead style={{position:'sticky', top:0, backgroundColor:'#111827'}}>
                     <tr style={styles.tableHead}>
-                        {/* COLUMNA EXTRA PARA FLOTA */}
                         {reportType === 'fleet_speed' && <th>Vehículo / Placa</th>}
                         <th>Fecha y Hora</th>
                         <th>Tipo de Evento</th>
@@ -742,7 +826,6 @@ export default function Reports({ devices, token }) {
 
                     return (
                       <tr key={ev.id || index} style={{ borderBottom: '1px solid #1F2937' }}>
-                        {/* DATO EXTRA DE LA PLACA PARA FLOTA */}
                         {reportType === 'fleet_speed' && (
                           <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{ev.deviceName}</td>
                         )}

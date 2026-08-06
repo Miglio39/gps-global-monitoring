@@ -161,12 +161,13 @@ export default function DeviceManagement({ token, devices }) {
                 className="dev-form-input"
             >
                 <option value="" disabled>-- Seleccionar Marca del GPS --</option>
+                <option value="5001">Coban / TK103 (5001)</option>
+                <option value="5011">Suntech (5011)</option>
+                <option value="5013">SinoTrack / Boxtrack (5013)</option>
                 <option value="5023">Concox / Jimi IoT (5023)</option>
-                <option value="5159">Protrack / Huabao (5159)</option>
-                <option value="5001">Coban / TK (5001)</option>
-                <option value="5013">SinoTrack (5013)</option>
                 <option value="5027">Teltonika (5027)</option>
-                <option value="5093">Ruptela (5093)</option>
+                <option value="5053">Protrack V2 / Nueva Generación (5053)</option>
+                <option value="5159">Protrack V1 / Huabao (5159)</option>
             </select>
 
             {/* SELECTOR DE USUARIO (Solo visible al crear un nuevo GPS) */}
@@ -237,14 +238,18 @@ export default function DeviceManagement({ token, devices }) {
                       filteredDevices.map(d => {
                           const p = d.attributes?.puerto;
                           let marcaTexto = p ? `${p}` : 'N/A';
-                          if (p === 5023) marcaTexto = 'Concox (5023)';
-                          if (p === 5159) marcaTexto = 'Protrack (5159)';
-                          if (p === 5013) marcaTexto = 'SinoTrack (5013)';
+                          
+                          // Traducción organizada de los puertos en la tabla
                           if (p === 5001) marcaTexto = 'Coban (5001)';
+                          if (p === 5011) marcaTexto = 'Suntech (5011)';
+                          if (p === 5013) marcaTexto = 'SinoTrack (5013)';
+                          if (p === 5023) marcaTexto = 'Concox (5023)';
                           if (p === 5027) marcaTexto = 'Teltonika (5027)';
+                          if (p === 5053) marcaTexto = 'Protrack V2 (5053)';
+                          if (p === 5159) marcaTexto = 'Protrack V1 (5159)';
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
-                          // Formateo de la nueva fecha inyectada
+                          // Formateo de la fecha inyectada
                           const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
 
                           return (
