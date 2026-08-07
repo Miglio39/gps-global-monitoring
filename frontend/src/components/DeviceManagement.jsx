@@ -14,6 +14,9 @@ export default function DeviceManagement({ token, devices }) {
   const [deviceUserMap, setDeviceUserMap] = useState({});
   const [sortOrder, setSortOrder] = useState('default'); // 'default', 'asc', 'desc'
 
+  // NUEVO: Estado para controlar qué celda se está editando "en línea"
+  const [inlineAssignDeviceId, setInlineAssignDeviceId] = useState(null);
+
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
   // Función combinada para traer usuarios y mapear qué dispositivo tiene cada cliente
@@ -137,6 +140,29 @@ export default function DeviceManagement({ token, devices }) {
       }
   };
 
+  // NUEVO: Función para asignar cliente directamente desde la celda de la tabla
+  const handleInlineAssign = async (deviceId, userId) => {
+    if (!userId) {
+      setInlineAssignDeviceId(null);
+      return;
+    }
+    try {
+      const res = await fetch(`${BASE_URL}/api/permissions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: parseInt(userId), deviceId: deviceId })
+      });
+      if (res.ok) {
+        fetchUsersAndMapping(); // Refresca la tabla automáticamente
+      } else {
+        alert("Error al asignar el cliente en línea.");
+      }
+    } catch (err) {
+      console.error("Error al asignar cliente:", err);
+    }
+    setInlineAssignDeviceId(null); // Cierra el modo edición
+  };
+
   // Alternar el ordenamiento de fechas
   const handleSortToggle = () => {
     if (sortOrder === 'default') setSortOrder('asc');
@@ -168,7 +194,7 @@ export default function DeviceManagement({ token, devices }) {
     });
   }
 
-  // === NUEVO: EXPORTADOR PROFESIONAL A EXCEL ===
+  // EXPORTADOR PROFESIONAL A EXCEL
   const handleDownloadExcel = () => {
     if (sortedDevices.length === 0) {
       return alert("No hay dispositivos en la lista para exportar.");
@@ -397,13 +423,41 @@ export default function DeviceManagement({ token, devices }) {
                           return (
                               <tr key={d.id} style={styles.tr}>
                                   <td style={styles.td}><strong>{d.name}</strong></td>
+                                  
+                                  {/* AJUSTE MAESTRO: Asignación Rápida "En Línea" */}
                                   <td style={styles.td}>
                                     {deviceUserMap[d.id] ? (
-                                      <span style={{color: '#34D399', fontWeight: 'bold'}}>{deviceUserMap[d.id]}</span>
+                                      <span 
+                                        title={deviceUserMap[d.id]} 
+                                        style={{color: '#34D399', fontWeight: 'bold'}}
+                                      >
+                                        {deviceUserMap[d.id].length > 12 
+                                          ? deviceUserMap[d.id].substring(0, 12) + '...' 
+                                          : deviceUserMap[d.id]}
+                                      </span>
+                                    ) : inlineAssignDeviceId === d.id ? (
+                                      <select 
+                                        autoFocus
+                                        onChange={(e) => handleInlineAssign(d.id, e.target.value)}
+                                        onBlur={() => setInlineAssignDeviceId(null)}
+                                        style={{...styles.input, padding: '4px', fontSize: '11px', minWidth: '120px'}}
+                                      >
+                                        <option value="">-- Elegir Cliente --</option>
+                                        {users.filter(u => !u.administrator).map(u => (
+                                          <option key={u.id} value={u.id}>{u.name}</option>
+                                        ))}
+                                      </select>
                                     ) : (
-                                      <span style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic'}}>Sin asignar</span>
+                                      <span 
+                                        onClick={() => setInlineAssignDeviceId(d.id)}
+                                        style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic', cursor: 'pointer', borderBottom: '1px dashed #6B7280'}}
+                                        title="Clic para asignar cliente a este GPS"
+                                      >
+                                        Sin asignar ✏️
+                                      </span>
                                     )}
                                   </td>
+
                                   <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
                                   <td style={styles.td}>{d.phone || 'N/A'}</td>
                                   <td style={styles.td}>{marcaTexto}</td>
@@ -431,10 +485,12 @@ const styles = {
   form: { display: 'flex', flexDirection: 'column', gap: '10px' },
   input: { backgroundColor: '#0B1120', border: '1px solid #1F2937', borderRadius: '6px', padding: '12px', color: 'white', fontSize: '14px', outline: 'none' },
   btn: { backgroundColor: '#2563EB', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
-  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white', minWidth: '900px' },
-  th: { padding: '12px 15px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '13px', color: '#9CA3AF', whiteSpace: 'nowrap' },
+  
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', color: 'white' }, 
+  th: { padding: '10px 8px', backgroundColor: '#1F2937', borderBottom: '2px solid #374151', fontSize: '12px', color: '#9CA3AF', whiteSpace: 'nowrap' }, 
   tr: { borderBottom: '1px solid #1F2937' },
-  td: { padding: '12px 15px', fontSize: '14px', whiteSpace: 'nowrap' },
+  td: { padding: '10px 8px', fontSize: '13px', whiteSpace: 'nowrap' }, 
+  
   actionBtnEdit: { background: 'transparent', border: '1px solid #3B82F6', color: '#3B82F6', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', marginRight: '8px' },
   actionBtnDelete: { background: 'transparent', border: '1px solid #EF4444', color: '#EF4444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer' }
 };
