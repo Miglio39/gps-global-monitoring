@@ -169,6 +169,8 @@ export default function DeviceManagement({ token, devices }) {
                 <option value="5039">Queclink (5039)</option>
                 <option value="5053">Protrack V2 / Nueva Generación (5053)</option>
                 <option value="5159">Protrack V1 / Huabao (5159)</option>
+                <option value="5004">Protrack V1 / Huabao (5004)</option>
+
             </select>
 
             {/* SELECTOR DE USUARIO (Solo visible al crear un nuevo GPS) */}
