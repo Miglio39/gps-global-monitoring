@@ -5,29 +5,50 @@ export default function DeviceManagement({ token, devices }) {
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   
-  // Estados para el buscador de dispositivos y la asignación de usuarios
+  // Estados para el buscador de dispositivos, asignación y ordenamiento
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState([]);
   const [selectedUserToAssign, setSelectedUserToAssign] = useState('');
+  
+  // NUEVO: Estados para mapeo de clientes y ordenamiento de fechas
+  const [deviceUserMap, setDeviceUserMap] = useState({});
+  const [sortOrder, setSortOrder] = useState('default'); // 'default', 'asc', 'desc'
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
-  // Cargar la lista de usuarios para poder asignarlos al crear el GPS
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const res = await fetch(`${BASE_URL}/api/users`, {
-          headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+  // NUEVO: Función combinada para traer usuarios y mapear qué dispositivo tiene cada cliente
+  const fetchUsersAndMapping = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/api/users`, {
+        headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+      });
+      if (res.ok) {
+        const usersData = await res.json();
+        setUsers(usersData);
+
+        // Mapear dispositivos por cliente (Omitiendo a los administradores para no saturar)
+        const mapping = {};
+        const fetchPromises = usersData.filter(u => !u.administrator).map(async (user) => {
+          const devRes = await fetch(`${BASE_URL}/api/devices?userId=${user.id}`, {
+            headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
+          });
+          if (devRes.ok) {
+            const userDevs = await devRes.json();
+            userDevs.forEach(d => {
+              mapping[d.id] = mapping[d.id] ? `${mapping[d.id]}, ${user.name}` : user.name;
+            });
+          }
         });
-        if (res.ok) {
-          const data = await res.json();
-          setUsers(data);
-        }
-      } catch (err) {
-        console.error("Error cargando usuarios:", err);
+        await Promise.all(fetchPromises);
+        setDeviceUserMap(mapping);
       }
-    };
-    fetchUsers();
+    } catch (err) {
+      console.error("Error cargando usuarios y asignaciones:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsersAndMapping();
   }, [token]);
 
   const handleSaveDevice = async (e) => {
@@ -76,6 +97,8 @@ export default function DeviceManagement({ token, devices }) {
                   headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
                   body: JSON.stringify({ userId: parseInt(selectedUserToAssign), deviceId: newDevice.id })
                 });
+                // Actualizamos el mapa de clientes visualmente tras asignar
+                fetchUsersAndMapping();
               } catch (permErr) {
                 console.error("Error asignando el GPS al usuario:", permErr);
               }
@@ -114,15 +137,36 @@ export default function DeviceManagement({ token, devices }) {
       }
   };
 
+  // NUEVO: Alternar el ordenamiento de fechas
+  const handleSortToggle = () => {
+    if (sortOrder === 'default') setSortOrder('asc');
+    else if (sortOrder === 'asc') setSortOrder('desc');
+    else setSortOrder('default');
+  };
+
   // Lógica de Filtrado (Buscador)
   const filteredDevices = devices.filter(d => {
     const term = searchTerm.toLowerCase();
+    const clientName = deviceUserMap[d.id] ? deviceUserMap[d.id].toLowerCase() : '';
     return (
       (d.name && d.name.toLowerCase().includes(term)) ||
       (d.uniqueId && d.uniqueId.toLowerCase().includes(term)) ||
-      (d.phone && d.phone.toLowerCase().includes(term))
+      (d.phone && d.phone.toLowerCase().includes(term)) ||
+      (clientName.includes(term))
     );
   });
+
+  // NUEVO: Lógica de Ordenamiento
+  let sortedDevices = [...filteredDevices];
+  if (sortOrder !== 'default') {
+    sortedDevices.sort((a, b) => {
+      const dateA = a.lastUpdate ? new Date(a.lastUpdate).getTime() : 0;
+      const dateB = b.lastUpdate ? new Date(b.lastUpdate).getTime() : 0;
+      if (sortOrder === 'asc') return dateA - dateB; // Menor a mayor (Nunca/Antiguos primero)
+      if (sortOrder === 'desc') return dateB - dateA; // Mayor a menor (Recientes primero)
+      return 0;
+    });
+  }
 
   return (
     <div>
@@ -153,6 +197,7 @@ export default function DeviceManagement({ token, devices }) {
             <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={styles.input} className="dev-form-input" />
             <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={styles.input} className="dev-form-input" />
             
+            {/* NUEVO: Puertos organizados de menor a mayor */}
             <select 
                 required 
                 value={deviceForm.puerto} 
@@ -162,16 +207,15 @@ export default function DeviceManagement({ token, devices }) {
             >
                 <option value="" disabled>-- Seleccionar Marca del GPS --</option>
                 <option value="5001">Coban / TK103 (5001)</option>
+                <option value="5004">Queclink - Alt (5004)</option>
                 <option value="5011">Suntech (5011)</option>
                 <option value="5013">SinoTrack / Boxtrack (5013)</option>
                 <option value="5023">Concox / Jimi IoT (5023)</option>
                 <option value="5027">Teltonika (5027)</option>
-                <option value="5039">Queclink (5039)</option>
+                <option value="5039">Queclink - Principal (5039)</option>
                 <option value="5053">Protrack V2 / Nueva Generación (5053)</option>
+                <option value="5065">BOXtracker (5065)</option>
                 <option value="5159">Protrack V1 / Huabao (5159)</option>
-                <option value="5004">Queclink (5004)</option>
-                <option value="5065">BOXtracker(5065)</option>
-
             </select>
 
             {/* SELECTOR DE USUARIO (Solo visible al crear un nuevo GPS) */}
@@ -210,11 +254,11 @@ export default function DeviceManagement({ token, devices }) {
         {/* Contenedor del Buscador */}
         <div className="search-container">
           <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
-            Hardware Registrado ({filteredDevices.length})
+            Hardware Registrado ({sortedDevices.length})
           </h3>
           <input 
             type="text" 
-            placeholder="🔍 Buscar placa, IMEI o SIM..." 
+            placeholder="🔍 Buscar placa, IMEI, cliente o SIM..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{...styles.input, width: '100%', maxWidth: '300px'}}
@@ -227,30 +271,40 @@ export default function DeviceManagement({ token, devices }) {
                 <thead>
                     <tr>
                         <th style={styles.th}>Placa</th>
+                        <th style={styles.th}>Cliente Asignado</th>
                         <th style={styles.th}>IMEI</th>
                         <th style={styles.th}>Número SIM</th>
                         <th style={styles.th}>Puerto / Marca</th>
                         <th style={styles.th}>Fecha Registro</th>
-                        <th style={styles.th}>Última Conexión</th>
+                        {/* NUEVO: Cabecera con ordenamiento visual interactivo */}
+                        <th 
+                          onClick={handleSortToggle} 
+                          style={{...styles.th, cursor: 'pointer', userSelect: 'none', color: sortOrder !== 'default' ? '#60A5FA' : '#9CA3AF'}}
+                          title="Clic para ordenar por fecha de conexión"
+                        >
+                          Última Conexión {sortOrder === 'asc' ? '⬆️' : sortOrder === 'desc' ? '⬇️' : '↕️'}
+                        </th>
                         <th style={styles.th}>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {filteredDevices.length === 0 ? (
-                      <tr><td colSpan="7" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
+                    {sortedDevices.length === 0 ? (
+                      <tr><td colSpan="8" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
                     ) : (
-                      filteredDevices.map(d => {
+                      sortedDevices.map(d => {
                           const p = d.attributes?.puerto;
                           let marcaTexto = p ? `${p}` : 'N/A';
                           
                           // Traducción organizada de los puertos en la tabla
                           if (p === 5001) marcaTexto = 'Coban (5001)';
+                          if (p === 5004) marcaTexto = 'Queclink (5004)';
                           if (p === 5011) marcaTexto = 'Suntech (5011)';
                           if (p === 5013) marcaTexto = 'SinoTrack (5013)';
                           if (p === 5023) marcaTexto = 'Concox (5023)';
                           if (p === 5027) marcaTexto = 'Teltonika (5027)';
                           if (p === 5039) marcaTexto = 'Queclink (5039)';
                           if (p === 5053) marcaTexto = 'Protrack V2 (5053)';
+                          if (p === 5065) marcaTexto = 'BOXtracker (5065)';
                           if (p === 5159) marcaTexto = 'Protrack V1 (5159)';
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
@@ -260,6 +314,16 @@ export default function DeviceManagement({ token, devices }) {
                           return (
                               <tr key={d.id} style={styles.tr}>
                                   <td style={styles.td}><strong>{d.name}</strong></td>
+                                  
+                                  {/* NUEVO: Celda que dibuja al cliente asignado */}
+                                  <td style={styles.td}>
+                                    {deviceUserMap[d.id] ? (
+                                      <span style={{color: '#34D399', fontWeight: 'bold'}}>{deviceUserMap[d.id]}</span>
+                                    ) : (
+                                      <span style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic'}}>Sin asignar</span>
+                                    )}
+                                  </td>
+
                                   <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
                                   <td style={styles.td}>{d.phone || 'N/A'}</td>
                                   <td style={styles.td}>{marcaTexto}</td>
