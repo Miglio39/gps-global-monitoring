@@ -10,13 +10,13 @@ export default function DeviceManagement({ token, devices }) {
   const [users, setUsers] = useState([]);
   const [selectedUserToAssign, setSelectedUserToAssign] = useState('');
   
-  // NUEVO: Estados para mapeo de clientes y ordenamiento de fechas
+  // Estados para mapeo de clientes y ordenamiento de fechas
   const [deviceUserMap, setDeviceUserMap] = useState({});
   const [sortOrder, setSortOrder] = useState('default'); // 'default', 'asc', 'desc'
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
-  // NUEVO: Función combinada para traer usuarios y mapear qué dispositivo tiene cada cliente
+  // Función combinada para traer usuarios y mapear qué dispositivo tiene cada cliente
   const fetchUsersAndMapping = async () => {
     try {
       const res = await fetch(`${BASE_URL}/api/users`, {
@@ -89,7 +89,7 @@ export default function DeviceManagement({ token, devices }) {
         if (res.ok) { 
             const newDevice = await res.json(); // Obtenemos el objeto del GPS recién creado con su ID
             
-            // === LA MAGIA: Asignación inmediata al usuario seleccionado ===
+            // Asignación inmediata al usuario seleccionado
             if (selectedUserToAssign) {
               try {
                 await fetch(`${BASE_URL}/api/permissions`, {
@@ -137,7 +137,7 @@ export default function DeviceManagement({ token, devices }) {
       }
   };
 
-  // NUEVO: Alternar el ordenamiento de fechas
+  // Alternar el ordenamiento de fechas
   const handleSortToggle = () => {
     if (sortOrder === 'default') setSortOrder('asc');
     else if (sortOrder === 'asc') setSortOrder('desc');
@@ -156,7 +156,7 @@ export default function DeviceManagement({ token, devices }) {
     );
   });
 
-  // NUEVO: Lógica de Ordenamiento
+  // Lógica de Ordenamiento
   let sortedDevices = [...filteredDevices];
   if (sortOrder !== 'default') {
     sortedDevices.sort((a, b) => {
@@ -167,6 +167,84 @@ export default function DeviceManagement({ token, devices }) {
       return 0;
     });
   }
+
+  // === NUEVO: EXPORTADOR PROFESIONAL A EXCEL ===
+  const handleDownloadExcel = () => {
+    if (sortedDevices.length === 0) {
+      return alert("No hay dispositivos en la lista para exportar.");
+    }
+
+    let filename = `Inventario_Flota_GPS_${new Date().getTime()}.xls`;
+
+    let htmlTemplate = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/><style>
+        th { background-color: #1F2937; color: #FFFFFF; font-weight: bold; text-align: left; font-family: Arial; font-size: 11pt; padding: 6px; }
+        td { border: 0.5pt solid #D1D5DB; font-family: Arial; font-size: 10pt; padding: 4px; }
+        .meta-title { font-size: 12pt; font-weight: bold; color: #111827; font-family: Arial; }
+      </style></head>
+      <body>
+      <table>
+        <tr><td colspan="7" class="meta-title"><b>INVENTARIO GENERAL DE HARDWARE Y LÍNEAS SIM</b></td></tr>
+        <tr><td colspan="7" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
+        <tr><td colspan="7" style="color: #6B7280;">Total Registros Exportados: ${sortedDevices.length}</td></tr>
+        <tr></tr>
+        <tr>
+          <th><b>PLACA / VEHÍCULO</b></th>
+          <th><b>CLIENTE ASIGNADO</b></th>
+          <th><b>IMEI</b></th>
+          <th><b>NÚMERO SIM</b></th>
+          <th><b>MARCA / PUERTO</b></th>
+          <th><b>FECHA DE REGISTRO</b></th>
+          <th><b>ÚLTIMA CONEXIÓN</b></th>
+        </tr>
+    `;
+
+    sortedDevices.forEach(d => {
+      const p = d.attributes?.puerto;
+      let marcaTexto = p ? `${p}` : 'N/A';
+      
+      // Traducción organizada para Excel
+      if (p === 5001) marcaTexto = 'Coban (5001)';
+      if (p === 5004) marcaTexto = 'Queclink (5004)';
+      if (p === 5011) marcaTexto = 'Suntech (5011)';
+      if (p === 5013) marcaTexto = 'SinoTrack (5013)';
+      if (p === 5023) marcaTexto = 'Concox (5023)';
+      if (p === 5027) marcaTexto = 'Teltonika (5027)';
+      if (p === 5039) marcaTexto = 'Queclink (5039)';
+      if (p === 5053) marcaTexto = 'Protrack V2 (5053)';
+      if (p === 5065) marcaTexto = 'BOXtracker (5065)';
+      if (p === 5159) marcaTexto = 'Protrack V1 (5159)';
+      if (p === 5093) marcaTexto = 'Ruptela (5093)';
+
+      const cliente = deviceUserMap[d.id] || 'Sin asignar';
+      const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
+      const ultimaConexion = d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca';
+
+      htmlTemplate += `
+        <tr>
+          <td>${d.name}</td>
+          <td>${cliente}</td>
+          <td style="mso-number-format:'\@';">${d.uniqueId}</td> <!-- mso-number evita que Excel convierta el IMEI en notación científica -->
+          <td style="mso-number-format:'\@';">${d.phone || 'N/A'}</td>
+          <td>${marcaTexto}</td>
+          <td>${fechaReg}</td>
+          <td>${ultimaConexion}</td>
+        </tr>
+      `;
+    });
+
+    htmlTemplate += `</table></body></html>`;
+
+    const blob = new Blob([htmlTemplate], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div>
@@ -197,7 +275,6 @@ export default function DeviceManagement({ token, devices }) {
             <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={styles.input} className="dev-form-input" />
             <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={styles.input} className="dev-form-input" />
             
-            {/* NUEVO: Puertos organizados de menor a mayor */}
             <select 
                 required 
                 value={deviceForm.puerto} 
@@ -218,7 +295,7 @@ export default function DeviceManagement({ token, devices }) {
                 <option value="5159">Protrack V1 / Huabao (5159)</option>
             </select>
 
-            {/* SELECTOR DE USUARIO (Solo visible al crear un nuevo GPS) */}
+            {/* SELECTOR DE USUARIO */}
             {!editingDeviceId && (
               <select 
                   value={selectedUserToAssign} 
@@ -251,19 +328,28 @@ export default function DeviceManagement({ token, devices }) {
       {/* TABLA DE DISPOSITIVOS */}
       <div style={{...styles.adminCard, marginTop: '20px'}} className="dev-card-container">
         
-        {/* Contenedor del Buscador */}
+        {/* Contenedor del Buscador y Exportación */}
         <div className="search-container">
           <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
             Hardware Registrado ({sortedDevices.length})
           </h3>
-          <input 
-            type="text" 
-            placeholder="🔍 Buscar placa, IMEI, cliente o SIM..." 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{...styles.input, width: '100%', maxWidth: '300px'}}
-            className="search-input"
-          />
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: '100%', maxWidth: '420px' }}>
+            <input 
+              type="text" 
+              placeholder="🔍 Buscar placa, IMEI, cliente o SIM..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{...styles.input, flex: 1, minWidth: '200px'}}
+              className="search-input"
+            />
+            <button 
+              onClick={handleDownloadExcel}
+              style={{...styles.btn, backgroundColor: '#10B981', display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px'}}
+              title="Descargar Inventario a Excel"
+            >
+              📊 Exportar
+            </button>
+          </div>
         </div>
 
         <div style={{overflowX: 'auto', borderTop: '1px solid #1F2937', paddingTop: '10px'}}>
@@ -276,7 +362,6 @@ export default function DeviceManagement({ token, devices }) {
                         <th style={styles.th}>Número SIM</th>
                         <th style={styles.th}>Puerto / Marca</th>
                         <th style={styles.th}>Fecha Registro</th>
-                        {/* NUEVO: Cabecera con ordenamiento visual interactivo */}
                         <th 
                           onClick={handleSortToggle} 
                           style={{...styles.th, cursor: 'pointer', userSelect: 'none', color: sortOrder !== 'default' ? '#60A5FA' : '#9CA3AF'}}
@@ -295,7 +380,6 @@ export default function DeviceManagement({ token, devices }) {
                           const p = d.attributes?.puerto;
                           let marcaTexto = p ? `${p}` : 'N/A';
                           
-                          // Traducción organizada de los puertos en la tabla
                           if (p === 5001) marcaTexto = 'Coban (5001)';
                           if (p === 5004) marcaTexto = 'Queclink (5004)';
                           if (p === 5011) marcaTexto = 'Suntech (5011)';
@@ -308,14 +392,11 @@ export default function DeviceManagement({ token, devices }) {
                           if (p === 5159) marcaTexto = 'Protrack V1 (5159)';
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
-                          // Formateo de la fecha inyectada
                           const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
 
                           return (
                               <tr key={d.id} style={styles.tr}>
                                   <td style={styles.td}><strong>{d.name}</strong></td>
-                                  
-                                  {/* NUEVO: Celda que dibuja al cliente asignado */}
                                   <td style={styles.td}>
                                     {deviceUserMap[d.id] ? (
                                       <span style={{color: '#34D399', fontWeight: 'bold'}}>{deviceUserMap[d.id]}</span>
@@ -323,7 +404,6 @@ export default function DeviceManagement({ token, devices }) {
                                       <span style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic'}}>Sin asignar</span>
                                     )}
                                   </td>
-
                                   <td style={{...styles.td, color: '#9CA3AF'}}>{d.uniqueId}</td>
                                   <td style={styles.td}>{d.phone || 'N/A'}</td>
                                   <td style={styles.td}>{marcaTexto}</td>
