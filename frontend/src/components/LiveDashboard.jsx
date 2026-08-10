@@ -150,9 +150,11 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, armedDevices, devices]);
 
+  // Lógica KPI Matemáticamente Exacta
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online').length;
-  const offlineCount = devices.filter(d => d.status !== 'online').length;
+  const unknownCount = devices.filter(d => !d.lastUpdate).length; // Los nuevos que jamás reportaron
+  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate).length; // Offline real
   const movingCount = Object.values(positions).filter(p => p && p.speed > 0).length;
   const stoppedCount = Object.values(positions).filter(p => p && p.speed === 0).length;
 
@@ -227,9 +229,13 @@ export default function LiveDashboard({ devices, positions }) {
   const createCustomMarker = (device, speed, status) => {
     const isMoving = speed > 0;
     
+    // Única forma 100% segura de saber si un equipo jamás ha reportado
+    const isUnknown = !device.lastUpdate; 
+    
     let statusColor = '#8B5CF6'; 
-    if (status !== 'online') statusColor = '#EF4444'; 
-    else if (isMoving) statusColor = '#10B981';
+    if (isUnknown) statusColor = '#9CA3AF'; // Gris para equipos nuevos/nunca conectados
+    else if (status !== 'online') statusColor = '#EF4444'; // Rojo offline
+    else if (isMoving) statusColor = '#10B981'; // Verde online y moviéndose
 
     const categoryKey = localCategories[device.id] || device.category || 'automovil';
     const spriteUrl = VEHICLE_SPRITES[categoryKey] ? VEHICLE_SPRITES[categoryKey].url : VEHICLE_SPRITES.automovil.url;
@@ -268,14 +274,16 @@ export default function LiveDashboard({ devices, positions }) {
     const pos = getDevicePosition(device.id);
     const isMoving = pos && pos.speed > 0;
     const isStopped = pos && pos.speed === 0;
+    const isUnknown = !device.lastUpdate;
     const isOnline = device.status === 'online';
-    const isOffline = device.status !== 'online';
+    const isOffline = device.status !== 'online' && !isUnknown; // Estricto para Offline real
 
     let matchesStatus = true;
     if (filter === 'moving') matchesStatus = isMoving && isOnline;
     if (filter === 'stopped') matchesStatus = isStopped && isOnline;
     if (filter === 'online') matchesStatus = isOnline;
     if (filter === 'offline') matchesStatus = isOffline;
+    if (filter === 'unknown') matchesStatus = isUnknown; // Nuevo filtro!
 
     const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
 
@@ -335,13 +343,17 @@ export default function LiveDashboard({ devices, positions }) {
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
-              if (!pos) return null;
+              if (!pos) return null; // Si no hay coordenadas (Nunca conectado), no se dibuja en el mapa
               
               const batteryInfo = getBatteryInfo(device, pos);
               const isMoving = pos.speed > 0;
               const rawIgnition = pos.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
+
+              // Única forma 100% segura de saber si un equipo jamás ha reportado
+              const isUnknown = !device.lastUpdate;
+              const estadoStr = isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Desconectado');
 
               return (
                 <Marker 
@@ -353,7 +365,7 @@ export default function LiveDashboard({ devices, positions }) {
                   <Popup>
                     <b style={{color:'black', fontSize:'13px'}}>{device.name}</b><br/>
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
-                    <span style={{color:'#666', fontSize:'11px'}}>Estado: {device.status === 'online' ? '🟢 Conectado' : '🔴 Fuera de Línea'}</span><br/>
+                    <span style={{color:'#666', fontSize:'11px'}}>Estado: {estadoStr}</span><br/>
                     {hasIgnition && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
                     {batteryInfo.text && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
                     
@@ -410,6 +422,12 @@ export default function LiveDashboard({ devices, positions }) {
           <div onClick={() => setFilter('offline')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'offline' ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.1)'}}>
             <span style={styles.kpiLabel}>Offline</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
           </div>
+          
+          {/* NUEVO KPI: Nunca Conectados (Grises) */}
+          <div onClick={() => setFilter('unknown')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'unknown' ? '1.5px solid #9CA3AF' : '1px solid rgba(255,255,255,0.1)'}}>
+            <span style={styles.kpiLabel}>Nunca</span><span style={{...styles.kpiValue, color: '#9CA3AF'}}>{unknownCount}</span>
+          </div>
+
         </div>
       )}
 
@@ -454,10 +472,20 @@ export default function LiveDashboard({ devices, positions }) {
               const isMoving = pos && pos.speed > 0;
               const isSelected = selectedDevice?.id === device.id;
               const isArmed = armedDevices[device.id] || false;
+              
+              // LÓGICA DE ESTADO DINÁMICA (Online, Offline, Nunca conectado)
+              // Eliminamos las condiciones engañosas, 100% segura.
+              const isUnknown = !device.lastUpdate;
 
               let statusDotColor = '#8B5CF6'; 
-              if (device.status !== 'online') statusDotColor = '#EF4444'; 
-              else if (isMoving) statusDotColor = '#10B981'; 
+              if (isUnknown) statusDotColor = '#9CA3AF'; // Gris
+              else if (device.status !== 'online') statusDotColor = '#EF4444'; // Rojo
+              else if (isMoving) statusDotColor = '#10B981'; // Verde
+
+              let listStatusText = '0 km/h';
+              if (isUnknown) listStatusText = 'Nunca conectado';
+              else if (device.status !== 'online') listStatusText = 'Desconectado';
+              else if (pos) listStatusText = `${(pos.speed * 1.852).toFixed(0)} km/h`;
 
               const batteryInfo = getBatteryInfo(device, pos);
               const rawIgnition = pos?.attributes?.ignition;
@@ -500,8 +528,9 @@ export default function LiveDashboard({ devices, positions }) {
                     </div>
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                      {/* TEXTO DE ESTADO MEJORADO AQUÍ */}
                       <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: '500' }}>
-                        {device.status !== 'online' ? 'Desconectado' : pos ? `${(pos.speed * 1.852).toFixed(0)} km/h` : '0 km/h'}
+                        {listStatusText}
                       </span>
                       
                       <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
@@ -587,8 +616,6 @@ export default function LiveDashboard({ devices, positions }) {
               {Object.keys(VEHICLE_SPRITES).map(key => {
                 const sprite = VEHICLE_SPRITES[key];
                 
-
-
                 return (
                   <button
                     key={key}
