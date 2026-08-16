@@ -12,10 +12,10 @@ function ChangeView({ center }) {
   return null;
 }
 
-// === GALERÍA DE SPRITES (Camioneta Pickup "Hilux" Garantizada) ===
+// === GALERÍA DE SPRITES ===
 const VEHICLE_SPRITES = {
   automovil: { label: 'Carro', url: 'https://img.icons8.com/fluency/96/car.png' },
-  camioneta: { label: 'Camioneta', url: 'https://img.icons8.com/color/96/pickup.png' }, // <-- Camioneta Platón asegurada
+  camioneta: { label: 'Camioneta', url: 'https://img.icons8.com/color/96/pickup.png' }, 
   van: { label: 'Van', url: 'https://img.icons8.com/fluency/96/van.png' },
   camion: { label: 'Camión', url: 'https://img.icons8.com/fluency/96/truck.png' },
   tractocamion: { label: 'Semi-Truck', url: 'https://img.icons8.com/color/96/container-truck.png' }, 
@@ -150,11 +150,10 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, armedDevices, devices]);
 
-  // Lógica KPI Matemáticamente Exacta
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online').length;
-  const unknownCount = devices.filter(d => !d.lastUpdate).length; // Los nuevos que jamás reportaron
-  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate).length; // Offline real
+  const unknownCount = devices.filter(d => !d.lastUpdate).length; 
+  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate).length; 
   const movingCount = Object.values(positions).filter(p => p && p.speed > 0).length;
   const stoppedCount = Object.values(positions).filter(p => p && p.speed === 0).length;
 
@@ -225,17 +224,14 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
-  // === MARCADOR ESTILO SPRITE DE VIDEOJUEGO ===
   const createCustomMarker = (device, speed, status) => {
     const isMoving = speed > 0;
-    
-    // Única forma 100% segura de saber si un equipo jamás ha reportado
     const isUnknown = !device.lastUpdate; 
     
     let statusColor = '#8B5CF6'; 
-    if (isUnknown) statusColor = '#9CA3AF'; // Gris para equipos nuevos/nunca conectados
-    else if (status !== 'online') statusColor = '#EF4444'; // Rojo offline
-    else if (isMoving) statusColor = '#10B981'; // Verde online y moviéndose
+    if (isUnknown) statusColor = '#9CA3AF'; 
+    else if (status !== 'online') statusColor = '#EF4444'; 
+    else if (isMoving) statusColor = '#10B981'; 
 
     const categoryKey = localCategories[device.id] || device.category || 'automovil';
     const spriteUrl = VEHICLE_SPRITES[categoryKey] ? VEHICLE_SPRITES[categoryKey].url : VEHICLE_SPRITES.automovil.url;
@@ -276,30 +272,38 @@ export default function LiveDashboard({ devices, positions }) {
     const isStopped = pos && pos.speed === 0;
     const isUnknown = !device.lastUpdate;
     const isOnline = device.status === 'online';
-    const isOffline = device.status !== 'online' && !isUnknown; // Estricto para Offline real
+    const isOffline = device.status !== 'online' && !isUnknown; 
 
     let matchesStatus = true;
     if (filter === 'moving') matchesStatus = isMoving && isOnline;
     if (filter === 'stopped') matchesStatus = isStopped && isOnline;
     if (filter === 'online') matchesStatus = isOnline;
     if (filter === 'offline') matchesStatus = isOffline;
-    if (filter === 'unknown') matchesStatus = isUnknown; // Nuevo filtro!
+    if (filter === 'unknown') matchesStatus = isUnknown; 
 
     const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
 
     return matchesStatus && matchesSearch; 
   });
 
-  const handleDeviceClick = (device, pos) => {
+  // 👇 LÓGICA DIVIDIDA 1: Clic desde la lista lateral (Sí hace zoom y vuela al mapa)
+  const handleListClick = (device, pos) => {
     setSelectedDevice(device);
-    if (pos && map) map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
+    if (pos && map) {
+      map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
+    }
     
     if (isMobile) {
       setIsListOpen(false);
     }
   };
 
-  // Función para abrir Google Street View
+  // 👇 LÓGICA DIVIDIDA 2: Clic directo en el pin (NO hace zoom para evitar que la araña se desarme)
+  const handleMapMarkerClick = (device) => {
+    setSelectedDevice(device);
+    // Leaflet automáticamente abre el <Popup> al hacer clic, no forzamos el zoom ni vuelo aquí
+  };
+
   const openStreetView = (lat, lng) => {
     if (!lat || !lng) return;
     const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
@@ -340,10 +344,16 @@ export default function LiveDashboard({ devices, positions }) {
         <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
           <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
           
-          <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
+          <MarkerClusterGroup 
+            chunkedLoading 
+            maxClusterRadius={80} 
+            iconCreateFunction={createClusterCustomIcon}
+            spiderfyDistanceMultiplier={3} 
+            showCoverageOnHover={false} 
+          >
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
-              if (!pos) return null; // Si no hay coordenadas (Nunca conectado), no se dibuja en el mapa
+              if (!pos) return null; 
               
               const batteryInfo = getBatteryInfo(device, pos);
               const isMoving = pos.speed > 0;
@@ -351,25 +361,27 @@ export default function LiveDashboard({ devices, positions }) {
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
 
-              // Única forma 100% segura de saber si un equipo jamás ha reportado
               const isUnknown = !device.lastUpdate;
-              const estadoStr = isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Desconectado');
+              const estadoStr = isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Apagado');
+              
+              const ultimaConexion = device.lastUpdate ? new Date(device.lastUpdate).toLocaleString('es-CO') : 'Desconocida';
 
               return (
                 <Marker 
                   key={device.id} 
                   position={[pos.latitude, pos.longitude]} 
                   icon={createCustomMarker(device, pos.speed, device.status)}
-                  eventHandlers={{ click: () => handleDeviceClick(device, pos) }}
+                  // 👇 APLICADO: Usamos la función que no hace zoom automático
+                  eventHandlers={{ click: () => handleMapMarkerClick(device) }}
                 >
                   <Popup>
                     <b style={{color:'black', fontSize:'13px'}}>{device.name}</b><br/>
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Estado: {estadoStr}</span><br/>
+                    <span style={{color:'#666', fontSize:'11px'}}>Últ. conexión: {ultimaConexion}</span><br/>
                     {hasIgnition && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
                     {batteryInfo.text && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
                     
-                    {/* 👇 NUEVO BOTÓN DE STREET VIEW 👇 */}
                     <div style={{ marginTop: '10px' }}>
                       <button 
                         onClick={(e) => {
@@ -420,10 +432,9 @@ export default function LiveDashboard({ devices, positions }) {
             <span style={styles.kpiLabel}>Online</span><span style={{...styles.kpiValue, color: '#10B981'}}>{onlineCount}</span>
           </div>
           <div onClick={() => setFilter('offline')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'offline' ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.1)'}}>
-            <span style={styles.kpiLabel}>Offline</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
+            <span style={styles.kpiLabel}>Apagados</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
           </div>
           
-          {/* NUEVO KPI: Nunca Conectados (Grises) */}
           <div onClick={() => setFilter('unknown')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'unknown' ? '1.5px solid #9CA3AF' : '1px solid rgba(255,255,255,0.1)'}}>
             <span style={styles.kpiLabel}>Nunca</span><span style={{...styles.kpiValue, color: '#9CA3AF'}}>{unknownCount}</span>
           </div>
@@ -473,18 +484,16 @@ export default function LiveDashboard({ devices, positions }) {
               const isSelected = selectedDevice?.id === device.id;
               const isArmed = armedDevices[device.id] || false;
               
-              // LÓGICA DE ESTADO DINÁMICA (Online, Offline, Nunca conectado)
-              // Eliminamos las condiciones engañosas, 100% segura.
               const isUnknown = !device.lastUpdate;
 
               let statusDotColor = '#8B5CF6'; 
-              if (isUnknown) statusDotColor = '#9CA3AF'; // Gris
-              else if (device.status !== 'online') statusDotColor = '#EF4444'; // Rojo
-              else if (isMoving) statusDotColor = '#10B981'; // Verde
+              if (isUnknown) statusDotColor = '#9CA3AF'; 
+              else if (device.status !== 'online') statusDotColor = '#EF4444'; 
+              else if (isMoving) statusDotColor = '#10B981'; 
 
               let listStatusText = '0 km/h';
               if (isUnknown) listStatusText = 'Nunca conectado';
-              else if (device.status !== 'online') listStatusText = 'Desconectado';
+              else if (device.status !== 'online') listStatusText = 'Apagado';
               else if (pos) listStatusText = `${(pos.speed * 1.852).toFixed(0)} km/h`;
 
               const batteryInfo = getBatteryInfo(device, pos);
@@ -495,7 +504,8 @@ export default function LiveDashboard({ devices, positions }) {
               return (
                 <div 
                   key={device.id} 
-                  onClick={() => handleDeviceClick(device, pos)}
+                  // 👇 APLICADO: Clic desde la lista SÍ vuela hacia el carro
+                  onClick={() => handleListClick(device, pos)}
                   style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '10px' }}
                 >
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusDotColor, boxShadow: `0 0 8px ${statusDotColor}`, flexShrink: 0 }}></div>
@@ -528,7 +538,6 @@ export default function LiveDashboard({ devices, positions }) {
                     </div>
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                      {/* TEXTO DE ESTADO MEJORADO AQUÍ */}
                       <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: '500' }}>
                         {listStatusText}
                       </span>
