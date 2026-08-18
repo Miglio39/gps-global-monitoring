@@ -78,7 +78,7 @@ export default function UserManagement({ devices, token }) {
   };
 
   const handleUnlinkDevice = async (userId, deviceId) => {
-    if (!window.confirm("¿Desvincular este vehículo del usuario?")) return;
+    if (!window.confirm("¿Seguro que deseas desvincular este vehículo del usuario?")) return;
     try {
       const res = await fetch(`${BASE_URL}/api/permissions`, {
         method: 'DELETE',
@@ -90,6 +90,65 @@ export default function UserManagement({ devices, token }) {
       }
     } catch (err) {
       console.error("Error desvinculando:", err);
+    }
+  };
+
+  // 🔴 SUSPENSIÓN INDIVIDUAL DE VEHÍCULO
+  const handleToggleDeviceSuspend = async (userId, device) => {
+    const confirmMessage = device.disabled 
+      ? `¿Deseas REACTIVAR el servicio del vehículo ${device.name}?` 
+      : `¿Deseas SUSPENDER el vehículo ${device.name} por falta de pago? Dejará de reportar y se ocultará para el cliente.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const updatedDevice = { ...device, disabled: !device.disabled };
+      const res = await fetch(`${BASE_URL}/api/devices/${device.id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDevice)
+      });
+
+      if (res.ok) {
+        // Refrescamos solo los vehículos de ese usuario para actualizar el color
+        loadDevicesForUser(userId);
+      } else {
+        alert("Error al cambiar el estado del vehículo.");
+      }
+    } catch (err) {
+      console.error("Error en la suspensión del vehículo:", err);
+    }
+  };
+
+  // 🔴 SUSPENSIÓN GLOBAL DEL USUARIO
+  const handleToggleSuspend = async (user) => {
+    if (user.administrator) {
+      alert("No puedes suspender a un administrador del sistema.");
+      return;
+    }
+
+    const confirmMessage = user.disabled 
+      ? `¿Deseas REACTIVAR el servicio para el usuario ${user.name}?` 
+      : `¿Deseas SUSPENDER por falta de pago al usuario ${user.name}? Perderá el acceso de inmediato a toda su flota.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const updatedUser = { ...user, disabled: !user.disabled };
+      const res = await fetch(`${BASE_URL}/api/users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedUser)
+      });
+
+      if (res.ok) {
+        const savedUser = await res.json();
+        setUsers(prev => prev.map(u => u.id === user.id ? savedUser : u));
+      } else {
+        alert("Error al cambiar el estado del usuario.");
+      }
+    } catch (err) {
+      console.error("Error en la suspensión global:", err);
     }
   };
 
@@ -134,10 +193,7 @@ export default function UserManagement({ devices, token }) {
         email: formData.email, 
         administrator: formData.administrator,
         phone: formData.nitCedula, 
-        
-        // 🔴 LA MAGIA RESTAURADA: Esto convierte al cliente en "Manager" de sus propios enlaces
         userLimit: formData.administrator ? 0 : 1000, 
-        
         ...(formData.password ? { password: formData.password } : {})
       };
 
@@ -229,13 +285,14 @@ export default function UserManagement({ devices, token }) {
       </div>
 
       <div style={{ backgroundColor: '#111827', borderRadius: '12px', border: '1px solid #1F2937', overflowX: 'auto', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '1050px' }}>
           <thead>
             <tr style={{ backgroundColor: '#1F2937', color: '#9CA3AF', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Nombre / NIT o Cédula</th>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Usuario</th>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Rol</th>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151' }}>Flota Asignada (Vehículos)</th>
+              <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151', textAlign: 'center' }}>Estado Global</th>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151', textAlign: 'center' }}>Módulo Premium</th>
               <th style={{ padding: '16px 20px', borderBottom: '2px solid #374151', textAlign: 'center' }}>Acciones</th>
             </tr>
@@ -243,7 +300,7 @@ export default function UserManagement({ devices, token }) {
           <tbody>
             {filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#6B7280', fontSize: '14px' }}>
+                <td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#6B7280', fontSize: '14px' }}>
                   {loading ? '⏳ Cargando base de datos...' : 'No se encontraron usuarios.'}
                 </td>
               </tr>
@@ -253,9 +310,9 @@ export default function UserManagement({ devices, token }) {
                 const assignedDevices = userDevices[user.id] || [];
 
                 return (
-                  <tr key={user.id} className="user-row" style={{ borderBottom: '1px solid #1F2937' }}>
+                  <tr key={user.id} className="user-row" style={{ borderBottom: '1px solid #1F2937', opacity: user.disabled ? 0.6 : 1 }}>
                     <td style={{ padding: '12px 20px' }}>
-                      <div style={{ fontWeight: 'bold', color: '#F3F4F6', fontSize: '14px' }}>{user.name}</div>
+                      <div style={{ fontWeight: 'bold', color: '#F3F4F6', fontSize: '14px', textDecoration: user.disabled ? 'line-through' : 'none' }}>{user.name}</div>
                       <div style={{ color: '#9CA3AF', fontSize: '12px', marginTop: '2px' }}>NIT/Cédula: {user.phone || 'N/A'}</div>
                     </td>
 
@@ -275,7 +332,7 @@ export default function UserManagement({ devices, token }) {
                     </td>
 
                     <td style={{ padding: '8px 20px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '220px' }}>
                         <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
                           <select 
                             value={selectedDeviceToLink[user.id] || ''} 
@@ -296,24 +353,57 @@ export default function UserManagement({ devices, token }) {
                           </button>
                         </div>
 
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {/* 🔴 AQUI OCURRE LA MAGIA DE LA SUSPENSIÓN INDIVIDUAL */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {assignedDevices.map(d => (
                             <span key={d.id} style={{ 
-                              backgroundColor: '#374151', color: '#D1D5DB', fontSize: '10px', 
-                              padding: '2px 6px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px',
-                              border: '1px solid #4B5563'
+                              backgroundColor: d.disabled ? 'rgba(239, 68, 68, 0.15)' : '#374151', 
+                              color: d.disabled ? '#F87171' : '#D1D5DB', 
+                              fontSize: '11px', padding: '4px 8px', borderRadius: '12px', 
+                              display: 'flex', alignItems: 'center', gap: '6px',
+                              border: `1px solid ${d.disabled ? 'rgba(239, 68, 68, 0.4)' : '#4B5563'}`,
+                              textDecoration: d.disabled ? 'line-through' : 'none'
                             }}>
-                              🚘 {d.name}
+                              {d.disabled ? '🔴' : '🟢'} {d.name}
+                              
+                              {/* Botón de Pausa / Reactivación */}
+                              <button 
+                                onClick={() => handleToggleDeviceSuspend(user.id, d)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', fontSize: '12px' }}
+                                title={d.disabled ? "Click para Reactivar" : "Click para Suspender (Pausar)"}
+                              >
+                                {d.disabled ? '▶️' : '⏸️'}
+                              </button>
+
+                              <span style={{ color: '#4B5563', margin: '0 2px' }}>|</span>
+
+                              {/* Botón de Desvincular (Borrar asignación) */}
                               <button 
                                 onClick={() => handleUnlinkDevice(user.id, d.id)}
-                                style={{ background: 'none', border: 'none', color: '#F87171', cursor: 'pointer', padding: '0', fontSize: '11px', fontWeight: 'bold' }}
-                                title="Desvincular"
+                                style={{ background: 'none', border: 'none', color: '#F87171', cursor: 'pointer', padding: '0', fontSize: '12px', fontWeight: 'bold' }}
+                                title="Desvincular del usuario"
                               >×</button>
                             </span>
                           ))}
                           {assignedDevices.length === 0 && <span style={{ color: '#6B7280', fontSize: '11px', fontStyle: 'italic' }}>Sin vehículos vinculados</span>}
                         </div>
                       </div>
+                    </td>
+
+                    <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                      <button
+                        onClick={() => handleToggleSuspend(user)}
+                        title={user.disabled ? 'Reactivar acceso' : 'Suspender CUENTA COMPLETA por falta de pago'}
+                        style={{
+                          padding: '6px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.2s ease',
+                          backgroundColor: user.disabled ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                          color: user.disabled ? '#EF4444' : '#10B981',
+                          border: `1px solid ${user.disabled ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`
+                        }}
+                      >
+                        {user.disabled ? '🔴 Cuenta Suspendida' : '🟢 Cuenta Activa'}
+                      </button>
                     </td>
 
                     <td style={{ padding: '12px 20px', textAlign: 'center' }}>

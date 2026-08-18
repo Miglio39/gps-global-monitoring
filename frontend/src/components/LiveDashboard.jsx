@@ -151,9 +151,9 @@ export default function LiveDashboard({ devices, positions }) {
   }, [positions, armedDevices, devices]);
 
   const totalCount = devices.length;
-  const onlineCount = devices.filter(d => d.status === 'online').length;
-  const unknownCount = devices.filter(d => !d.lastUpdate).length; 
-  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate).length; 
+  const onlineCount = devices.filter(d => d.status === 'online' && !d.disabled).length;
+  const unknownCount = devices.filter(d => !d.lastUpdate && !d.disabled).length; 
+  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate && !d.disabled).length; 
   const movingCount = Object.values(positions).filter(p => p && p.speed > 0).length;
   const stoppedCount = Object.values(positions).filter(p => p && p.speed === 0).length;
 
@@ -224,12 +224,15 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
+  // === MARCADOR ESTILO SPRITE ===
   const createCustomMarker = (device, speed, status) => {
     const isMoving = speed > 0;
     const isUnknown = !device.lastUpdate; 
     
     let statusColor = '#8B5CF6'; 
-    if (isUnknown) statusColor = '#9CA3AF'; 
+    // 🔴 LA MAGIA: Si está suspendido, el marcador se vuelve gris muy oscuro
+    if (device.disabled) statusColor = '#374151'; 
+    else if (isUnknown) statusColor = '#9CA3AF'; 
     else if (status !== 'online') statusColor = '#EF4444'; 
     else if (isMoving) statusColor = '#10B981'; 
 
@@ -237,15 +240,15 @@ export default function LiveDashboard({ devices, positions }) {
     const spriteUrl = VEHICLE_SPRITES[categoryKey] ? VEHICLE_SPRITES[categoryKey].url : VEHICLE_SPRITES.automovil.url;
     
     const html = `
-      <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%);">
+      <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%); opacity: ${device.disabled ? '0.6' : '1'};">
         <img 
           src="${spriteUrl}" 
           onerror="this.onerror=null;this.src='https://img.icons8.com/fluency/96/car.png';"
-          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5));" 
+          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5)) ${device.disabled ? 'grayscale(100%)' : ''};" 
           alt="sprite" 
         />
         <div style="background: rgba(15, 23, 42, 0.9); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: 'Inter', Arial, sans-serif; font-weight: 700; color: #F3F4F6; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); border-bottom: 3px solid ${statusColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.4); margin-top: -4px;">
-          ${device.name}
+          ${device.disabled ? '🚫 ' : ''}${device.name}
         </div>
       </div>
     `;
@@ -275,33 +278,24 @@ export default function LiveDashboard({ devices, positions }) {
     const isOffline = device.status !== 'online' && !isUnknown; 
 
     let matchesStatus = true;
-    if (filter === 'moving') matchesStatus = isMoving && isOnline;
-    if (filter === 'stopped') matchesStatus = isStopped && isOnline;
-    if (filter === 'online') matchesStatus = isOnline;
-    if (filter === 'offline') matchesStatus = isOffline;
-    if (filter === 'unknown') matchesStatus = isUnknown; 
+    if (filter === 'moving') matchesStatus = isMoving && isOnline && !device.disabled;
+    if (filter === 'stopped') matchesStatus = isStopped && isOnline && !device.disabled;
+    if (filter === 'online') matchesStatus = isOnline && !device.disabled;
+    if (filter === 'offline') matchesStatus = isOffline && !device.disabled;
+    if (filter === 'unknown') matchesStatus = isUnknown && !device.disabled; 
 
     const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
 
     return matchesStatus && matchesSearch; 
   });
 
-  // 👇 LÓGICA DIVIDIDA 1: Clic desde la lista lateral (Sí hace zoom y vuela al mapa)
-  const handleListClick = (device, pos) => {
+  const handleDeviceClick = (device, pos) => {
     setSelectedDevice(device);
-    if (pos && map) {
-      map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
-    }
+    if (pos && map) map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
     
     if (isMobile) {
       setIsListOpen(false);
     }
-  };
-
-  // 👇 LÓGICA DIVIDIDA 2: Clic directo en el pin (NO hace zoom para evitar que la araña se desarme)
-  const handleMapMarkerClick = (device) => {
-    setSelectedDevice(device);
-    // Leaflet automáticamente abre el <Popup> al hacer clic, no forzamos el zoom ni vuelo aquí
   };
 
   const openStreetView = (lat, lng) => {
@@ -344,13 +338,7 @@ export default function LiveDashboard({ devices, positions }) {
         <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
           <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
           
-          <MarkerClusterGroup 
-            chunkedLoading 
-            maxClusterRadius={80} 
-            iconCreateFunction={createClusterCustomIcon}
-            spiderfyDistanceMultiplier={3} 
-            showCoverageOnHover={false} 
-          >
+          <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
               if (!pos) return null; 
@@ -362,7 +350,11 @@ export default function LiveDashboard({ devices, positions }) {
               const finalIgnition = isMoving ? true : rawIgnition;
 
               const isUnknown = !device.lastUpdate;
-              const estadoStr = isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Apagado');
+
+              // 🔴 LA MAGIA DEL POPUP: Detectar suspensión para el usuario
+              const estadoStr = device.disabled 
+                ? '🚫 Suspendido por Falta de Pago' 
+                : (isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Apagado'));
               
               const ultimaConexion = device.lastUpdate ? new Date(device.lastUpdate).toLocaleString('es-CO') : 'Desconocida';
 
@@ -371,39 +363,24 @@ export default function LiveDashboard({ devices, positions }) {
                   key={device.id} 
                   position={[pos.latitude, pos.longitude]} 
                   icon={createCustomMarker(device, pos.speed, device.status)}
-                  // 👇 APLICADO: Usamos la función que no hace zoom automático
-                  eventHandlers={{ click: () => handleMapMarkerClick(device) }}
+                  eventHandlers={{ click: () => handleDeviceClick(device, pos) }}
                 >
                   <Popup>
-                    <b style={{color:'black', fontSize:'13px'}}>{device.name}</b><br/>
+                    <b style={{color: device.disabled ? '#EF4444' : 'black', fontSize:'13px', textDecoration: device.disabled ? 'line-through' : 'none'}}>
+                      {device.name}
+                    </b><br/>
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
-                    <span style={{color:'#666', fontSize:'11px'}}>Estado: {estadoStr}</span><br/>
+                    <span style={{color: device.disabled ? '#EF4444' : '#666', fontSize:'11px', fontWeight: device.disabled ? 'bold' : 'normal'}}>
+                      Estado: {estadoStr}
+                    </span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Últ. conexión: {ultimaConexion}</span><br/>
-                    {hasIgnition && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
-                    {batteryInfo.text && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
+                    {hasIgnition && !device.disabled && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
+                    {batteryInfo.text && !device.disabled && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
                     
                     <div style={{ marginTop: '10px' }}>
                       <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openStreetView(pos.latitude, pos.longitude);
-                        }}
-                        style={{ 
-                          backgroundColor: '#3B82F6', 
-                          color: 'white', 
-                          border: 'none', 
-                          borderRadius: '6px', 
-                          padding: '6px 0', 
-                          fontSize: '11px', 
-                          fontWeight: 'bold', 
-                          cursor: 'pointer', 
-                          width: '100%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                        }}
+                        onClick={(e) => { e.stopPropagation(); openStreetView(pos.latitude, pos.longitude); }}
+                        style={{ backgroundColor: '#3B82F6', color: 'white', border: 'none', borderRadius: '6px', padding: '6px 0', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
                       >
                         👁️ Ver Street View
                       </button>
@@ -434,11 +411,9 @@ export default function LiveDashboard({ devices, positions }) {
           <div onClick={() => setFilter('offline')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'offline' ? '1.5px solid #EF4444' : '1px solid rgba(255,255,255,0.1)'}}>
             <span style={styles.kpiLabel}>Apagados</span><span style={{...styles.kpiValue, color: '#EF4444'}}>{offlineCount}</span>
           </div>
-          
           <div onClick={() => setFilter('unknown')} style={{...styles.kpiCard, pointerEvents: 'auto', border: filter === 'unknown' ? '1.5px solid #9CA3AF' : '1px solid rgba(255,255,255,0.1)'}}>
             <span style={styles.kpiLabel}>Nunca</span><span style={{...styles.kpiValue, color: '#9CA3AF'}}>{unknownCount}</span>
           </div>
-
         </div>
       )}
 
@@ -486,13 +461,16 @@ export default function LiveDashboard({ devices, positions }) {
               
               const isUnknown = !device.lastUpdate;
 
+              // 🔴 LA MAGIA EN LA LISTA LATERAL: Colores y textos
               let statusDotColor = '#8B5CF6'; 
-              if (isUnknown) statusDotColor = '#9CA3AF'; 
-              else if (device.status !== 'online') statusDotColor = '#EF4444'; 
-              else if (isMoving) statusDotColor = '#10B981'; 
+              if (device.disabled) statusDotColor = '#374151'; // Suspendido es Gris oscuro
+              else if (isUnknown) statusDotColor = '#9CA3AF'; // Gris
+              else if (device.status !== 'online') statusDotColor = '#EF4444'; // Rojo
+              else if (isMoving) statusDotColor = '#10B981'; // Verde
 
               let listStatusText = '0 km/h';
-              if (isUnknown) listStatusText = 'Nunca conectado';
+              if (device.disabled) listStatusText = '🚫 Servicio Suspendido';
+              else if (isUnknown) listStatusText = 'Nunca conectado';
               else if (device.status !== 'online') listStatusText = 'Apagado';
               else if (pos) listStatusText = `${(pos.speed * 1.852).toFixed(0)} km/h`;
 
@@ -504,20 +482,19 @@ export default function LiveDashboard({ devices, positions }) {
               return (
                 <div 
                   key={device.id} 
-                  // 👇 APLICADO: Clic desde la lista SÍ vuela hacia el carro
-                  onClick={() => handleListClick(device, pos)}
-                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '10px' }}
+                  onClick={() => handleDeviceClick(device, pos)}
+                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', alignItems: 'center', gap: '10px', opacity: device.disabled ? 0.6 : 1 }}
                 >
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusDotColor, boxShadow: `0 0 8px ${statusDotColor}`, flexShrink: 0 }}></div>
                   
                   <div style={{ overflow: 'hidden', flex: 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600' }}>
-                        {device.name}
+                      <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600', textDecoration: device.disabled ? 'line-through' : 'none' }}>
+                        {device.disabled ? '🚫 ' : ''}{device.name}
                       </strong>
                       
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-                        {hasIgnition && (
+                        {hasIgnition && !device.disabled && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: finalIgnition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${finalIgnition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }} title={finalIgnition ? 'Motor Encendido' : 'Motor Apagado'}>
                             <span style={{ fontSize: '10px' }}>🔑</span>
                             <span style={{ fontSize: '9px', color: finalIgnition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
@@ -526,7 +503,7 @@ export default function LiveDashboard({ devices, positions }) {
                           </div>
                         )}
 
-                        {batteryInfo.text && (
+                        {batteryInfo.text && !device.disabled && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} title="Nivel de Batería">
                             <span style={{ fontSize: '10px' }}>🔋</span>
                             <span style={{ fontSize: '9px', color: batteryInfo.color, fontWeight: '800' }}>
@@ -538,56 +515,57 @@ export default function LiveDashboard({ devices, positions }) {
                     </div>
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                      <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: '500' }}>
+                      <span style={{ fontSize: '11px', color: device.disabled ? '#EF4444' : '#9CA3AF', fontWeight: '500' }}>
                         {listStatusText}
                       </span>
                       
                       <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
                         
-                        <button 
-                          title="Cambiar Ícono"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setIconEditModal({ isOpen: true, device: device });
-                          }}
-                          style={{ backgroundColor: 'transparent', border: '1px solid rgba(59, 130, 246, 0.5)', color: '#60A5FA', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.15)'; }}
-                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                        >
-                          ✏️ Ícono
-                        </button>
+                        {/* 🚫 CONDICIÓN: Si está suspendido, le ocultamos los controles y le mandamos un aviso */}
+                        {device.disabled ? (
+                           <span style={{ fontSize: '10px', color: '#EF4444', fontWeight: 'bold', padding: '2px 0' }}>COMUNICARSE CON ADMINISTRACIÓN</span>
+                        ) : (
+                          <>
+                            <button 
+                              title="Cambiar Ícono"
+                              onClick={(e) => { e.stopPropagation(); setIconEditModal({ isOpen: true, device: device }); }}
+                              style={{ backgroundColor: 'transparent', border: '1px solid rgba(59, 130, 246, 0.5)', color: '#60A5FA', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.15)'; }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
+                            >
+                              ✏️ Ícono
+                            </button>
 
-                        <button 
-                          title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setArmedDevices(prev => ({...prev, [device.id]: !isArmed}));
-                          }}
-                          style={{ backgroundColor: isArmed ? 'rgba(234, 179, 8, 0.15)' : 'transparent', border: isArmed ? '1px solid #EAB308' : '1px solid rgba(156, 163, 175, 0.3)', color: isArmed ? '#EAB308' : '#9CA3AF', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                          onMouseEnter={(e) => { if(!isArmed) e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'; }}
-                          onMouseLeave={(e) => { if(!isArmed) e.target.style.backgroundColor = 'transparent'; }}
-                        >
-                          {isArmed ? '🔔 Vigilando' : '🔕 Vigilar'}
-                        </button>
+                            <button 
+                              title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
+                              onClick={(e) => { e.stopPropagation(); setArmedDevices(prev => ({...prev, [device.id]: !isArmed})); }}
+                              style={{ backgroundColor: isArmed ? 'rgba(234, 179, 8, 0.15)' : 'transparent', border: isArmed ? '1px solid #EAB308' : '1px solid rgba(156, 163, 175, 0.3)', color: isArmed ? '#EAB308' : '#9CA3AF', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                              onMouseEnter={(e) => { if(!isArmed) e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'; }}
+                              onMouseLeave={(e) => { if(!isArmed) e.target.style.backgroundColor = 'transparent'; }}
+                            >
+                              {isArmed ? '🔔 Vigilando' : '🔕 Vigilar'}
+                            </button>
 
-                        <button 
-                          title="Apagar Motor"
-                          onClick={() => handleEngineControl(device.id, device.name, true)}
-                          style={{ backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'; }}
-                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                        >
-                          Apagar
-                        </button>
-                        <button 
-                          title="Habilitar Encendido"
-                          onClick={() => handleEngineControl(device.id, device.name, false)}
-                          style={{ backgroundColor: 'transparent', border: '1px solid rgba(16, 185, 129, 0.5)', color: '#10B981', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                          onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(16, 185, 129, 0.15)'; }}
-                          onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                        >
-                          Activar
-                        </button>
+                            <button 
+                              title="Apagar Motor"
+                              onClick={() => handleEngineControl(device.id, device.name, true)}
+                              style={{ backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'; }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
+                            >
+                              Apagar
+                            </button>
+                            <button 
+                              title="Habilitar Encendido"
+                              onClick={() => handleEngineControl(device.id, device.name, false)}
+                              style={{ backgroundColor: 'transparent', border: '1px solid rgba(16, 185, 129, 0.5)', color: '#10B981', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                              onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(16, 185, 129, 0.15)'; }}
+                              onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
+                            >
+                              Activar
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
