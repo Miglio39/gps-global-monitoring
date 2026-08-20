@@ -3,9 +3,19 @@ import React, { useState, useEffect } from 'react';
 // Ajusta la URL de tu API si es necesario
 const API_BASE = 'https://api.globalmonitorgps.com'; 
 
+const COURSE_LIST = [
+  { key: 'sgSst', label: '50 Hrs SG-SST' },
+  { key: 'mecanica', label: 'Mecánica Básica' },
+  { key: 'defensivo', label: 'Manejo Defensivo' },
+  { key: 'normas', label: 'Normas de Tránsito' },
+  { key: 'extintores', label: 'Extintores/Incendios' },
+  { key: 'auxilios', label: 'Primeros Auxilios' },
+  { key: 'teorico', label: 'Teórico Práctico' }
+];
+
 export default function DriversManagement({ token }) {
   const [drivers, setDrivers] = useState([]);
-  const [devices, setDevices] = useState([]); // ESTADO NUEVO: Para cargar los vehículos
+  const [devices, setDevices] = useState([]); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDriver, setEditingDriver] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -20,14 +30,17 @@ export default function DriversManagement({ token }) {
     eps: '',
     restrictions: '',
     licenses: [],
-    assignedDeviceId: '' // NUEVO: Para asignar el vehículo al conductor
+    assignedDeviceId: '',
+    courses: {
+      sgSst: '', mecanica: '', defensivo: '', normas: '', 
+      extintores: '', auxilios: '', teorico: ''
+    }
   });
 
   useEffect(() => {
     fetchData();
   }, [token]);
 
-  // Modificado: Ahora traemos Conductores y Vehículos al mismo tiempo
   const fetchData = async () => {
     try {
       const headers = {
@@ -49,6 +62,7 @@ export default function DriversManagement({ token }) {
     }
   };
 
+  // 1. AUMENTO DE RESOLUCIÓN (96x96 a 60% Calidad - Nitidez en tarjeta)
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -57,19 +71,23 @@ export default function DriversManagement({ token }) {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 120; 
-          const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scaleSize;
+          const SIZE = 99 ; // Incrementado para mayor nitidez
+          canvas.width = SIZE;
+          canvas.height = SIZE;
           
           const ctx = canvas.getContext('2d');
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const minDim = Math.min(img.width, img.height);
+          const sx = (img.width - minDim) / 2;
+          const sy = (img.height - minDim) / 2;
           
+          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, SIZE, SIZE);
+          
+          // Calidad ajustada a 60% para equilibrar peso y visión
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
-          setFormData({ ...formData, photo: compressedBase64 });
+          setFormData(prev => ({ ...prev, photo: compressedBase64 }));
         };
         img.src = reader.result;
       };
@@ -99,18 +117,30 @@ export default function DriversManagement({ token }) {
     e.preventDefault();
     setIsLoading(true);
 
-    const attributesPayload = {
-      phone: formData.phone,
-      photo: formData.photo,
-      bloodType: formData.bloodType,
-      eps: formData.eps,
-      restrictions: formData.restrictions,
-      licenses: JSON.stringify(formData.licenses) 
-    };
+    const cleanCourses = {};
+    if (formData.courses) {
+      Object.keys(formData.courses).forEach(key => {
+        if (formData.courses[key] && formData.courses[key].trim() !== '') {
+          cleanCourses[key] = formData.courses[key];
+        }
+      });
+    }
+
+    const validLicenses = (formData.licenses || []).filter(l => l.category && l.category.trim() !== '');
+
+    const attributesPayload = {};
+    if (formData.phone && formData.phone.trim() !== '') attributesPayload.phone = formData.phone;
+    if (formData.photo && formData.photo.trim() !== '') attributesPayload.photo = formData.photo;
+    if (formData.bloodType && formData.bloodType.trim() !== '') attributesPayload.bloodType = formData.bloodType;
+    if (formData.eps && formData.eps.trim() !== '') attributesPayload.eps = formData.eps;
+    if (formData.restrictions && formData.restrictions.trim() !== '') attributesPayload.restrictions = formData.restrictions;
+    
+    if (validLicenses.length > 0) attributesPayload.licenses = JSON.stringify(validLicenses);
+    if (Object.keys(cleanCourses).length > 0) attributesPayload.courses = cleanCourses;
 
     const attributesStringLength = JSON.stringify(attributesPayload).length;
-    if (attributesStringLength > 3900) {
-      alert(`⚠️ ERROR DE TAMAÑO: Los datos del conductor alcanzan los ${attributesStringLength} caracteres, superando el límite de 4000 permitidos por Traccar.\n\nPor favor, sube una foto con fondo más simple o elimina algunas categorías para liberar espacio.`);
+    if (attributesStringLength > 3980) {
+      alert(`⚠️ ERROR DE TAMAÑO (${attributesStringLength}/4000 caracteres): La información acumulada supera el límite máximo de Traccar.\n\nSube una foto más liviana o elimina algunos campos opcionales para liberar espacio.`);
       setIsLoading(false);
       return;
     }
@@ -138,10 +168,8 @@ export default function DriversManagement({ token }) {
       });
 
       if (response.ok) {
-        // --- NUEVA LÓGICA DE ASIGNACIÓN DE VEHÍCULO ---
         let driverId = editingDriver ? editingDriver.id : null;
         
-        // Si es un conductor nuevo, capturamos su ID recién creado
         if (!driverId) {
           const savedDriver = await response.json();
           driverId = savedDriver.id;
@@ -150,10 +178,9 @@ export default function DriversManagement({ token }) {
         const oldDevice = devices.find(d => d.attributes?.driverId === driverId);
         const newDeviceId = formData.assignedDeviceId ? parseInt(formData.assignedDeviceId) : null;
 
-        // 1. Desvincular del vehículo viejo si se cambió o se quitó
         if (oldDevice && oldDevice.id !== newDeviceId) {
           const updatedOldAttrs = { ...oldDevice.attributes };
-          delete updatedOldAttrs.driverId; // Le quitamos el conductor
+          delete updatedOldAttrs.driverId; 
           
           await fetch(`${API_BASE}/api/devices/${oldDevice.id}`, {
             method: 'PUT',
@@ -162,7 +189,6 @@ export default function DriversManagement({ token }) {
           });
         }
 
-        // 2. Vincular al nuevo vehículo seleccionado
         if (newDeviceId && (!oldDevice || oldDevice.id !== newDeviceId)) {
           const newDevice = devices.find(d => d.id === newDeviceId);
           if (newDevice) {
@@ -174,11 +200,10 @@ export default function DriversManagement({ token }) {
             });
           }
         }
-        // ----------------------------------------------
 
         setIsModalOpen(false);
         resetForm();
-        fetchData(); // Refrescamos todo (conductores y vehículos)
+        fetchData(); 
       } else {
         const errorText = await response.text();
         alert(`❌ Error del Servidor (${response.status}):\n${errorText}\n\n*Nota: Verifica si ya existe otro conductor con esta misma Cédula.`);
@@ -195,8 +220,6 @@ export default function DriversManagement({ token }) {
     if (!window.confirm("¿Estás seguro de eliminar este conductor? Esta acción no se puede deshacer.")) return;
     
     try {
-      // Opcional: También podríamos desvincularlo del vehículo antes de borrar, 
-      // pero Traccar normalmente ignora los driverId huérfanos.
       const response = await fetch(`${API_BASE}/api/drivers/${id}`, {
         method: 'DELETE',
         headers: {
@@ -227,8 +250,13 @@ export default function DriversManagement({ token }) {
       console.warn("No se pudieron parsear las licencias", e);
     }
 
-    // Buscar si este conductor ya tiene un vehículo asignado
     const assignedDev = devices.find(d => d.attributes?.driverId === driver.id);
+    
+    const driverCourses = driver.attributes?.courses || {};
+    const defaultCourses = {
+      sgSst: '', mecanica: '', defensivo: '', normas: '', 
+      extintores: '', auxilios: '', teorico: ''
+    };
 
     setEditingDriver(driver);
     setFormData({
@@ -240,7 +268,8 @@ export default function DriversManagement({ token }) {
       eps: driver.attributes?.eps || '',
       restrictions: driver.attributes?.restrictions || '',
       licenses: parsedLicenses,
-      assignedDeviceId: assignedDev ? assignedDev.id : '' // Cargamos el carro asignado
+      assignedDeviceId: assignedDev ? assignedDev.id : '',
+      courses: { ...defaultCourses, ...driverCourses }
     });
     setIsModalOpen(true);
   };
@@ -249,8 +278,39 @@ export default function DriversManagement({ token }) {
     setEditingDriver(null);
     setFormData({ 
       name: '', uniqueId: '', phone: '', photo: '', 
-      bloodType: '', eps: '', restrictions: '', licenses: [], assignedDeviceId: '' 
+      bloodType: '', eps: '', restrictions: '', licenses: [], assignedDeviceId: '',
+      courses: {
+        sgSst: '', mecanica: '', defensivo: '', normas: '', 
+        extintores: '', auxilios: '', teorico: ''
+      }
     });
+  };
+
+  // 2. FUNCIÓN DE SEMÁFORO DOCUMENTAL
+  const getDocumentStatusColor = (driver) => {
+    const today = new Date().toISOString().split('T')[0]; // Fecha en formato YYYY-MM-DD
+    
+    let licArray = [];
+    try {
+      licArray = typeof driver.attributes?.licenses === 'string' 
+        ? JSON.parse(driver.attributes.licenses) 
+        : (driver.attributes?.licenses || []);
+    } catch(e) {}
+
+    // Condición 1: Falta información vital (No tiene licencias) -> ROJO
+    if (licArray.length === 0) return '#EF4444';
+
+    // Condición 2: Licencias vencidas o sin fecha -> ROJO
+    const hasExpiredLicense = licArray.some(lic => !lic.expiration || lic.expiration < today);
+    if (hasExpiredLicense) return '#EF4444';
+
+    // Condición 3: Cursos vencidos -> ROJO
+    const courses = driver.attributes?.courses || {};
+    const hasExpiredCourse = Object.values(courses).some(dateStr => dateStr && dateStr !== '' && dateStr < today);
+    if (hasExpiredCourse) return '#EF4444';
+
+    // Todo al día -> VERDE
+    return '#10B981';
   };
 
   const filteredDrivers = drivers.filter(d => 
@@ -324,7 +384,6 @@ export default function DriversManagement({ token }) {
         
         .driver-card {
           background-color: #111827;
-          border: 1px solid #1F2937;
           border-radius: 12px;
           padding: 24px 20px;
           display: flex;
@@ -336,7 +395,6 @@ export default function DriversManagement({ token }) {
         .driver-card:hover {
           transform: translateY(-5px);
           box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-          border-color: #374151;
         }
 
         .driver-photo {
@@ -378,8 +436,6 @@ export default function DriversManagement({ token }) {
           gap: 4px;
         }
         .badge-license { background-color: rgba(37, 99, 235, 0.1); border-color: rgba(37, 99, 235, 0.3); color: #93C5FD; }
-        
-        /* NUEVO: Etiqueta Visual para el Vehículo Asignado */
         .badge-vehicle { background-color: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #34D399; font-weight: bold; }
         
         .restriction-text {
@@ -391,6 +447,15 @@ export default function DriversManagement({ token }) {
           padding: 6px;
           border-radius: 4px;
           width: 100%;
+        }
+
+        .course-container {
+          width: 100%;
+          margin-bottom: 15px;
+          background-color: rgba(59, 130, 246, 0.05);
+          border: 1px solid rgba(59, 130, 246, 0.2);
+          border-radius: 8px;
+          padding: 10px;
         }
         
         .card-actions {
@@ -545,6 +610,12 @@ export default function DriversManagement({ token }) {
         }
         .btn-remove-icon:hover { background: rgba(220, 38, 38, 0.3); }
 
+        .courses-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+
         @media (max-width: 768px) {
           .drivers-header { flex-direction: column; align-items: stretch; }
           .header-actions { flex-direction: column; min-width: 100%; }
@@ -552,6 +623,7 @@ export default function DriversManagement({ token }) {
           .form-row { flex-direction: column; gap: 0; }
           .license-row { flex-direction: column; align-items: stretch; }
           .btn-remove-icon { height: auto; padding: 10px; }
+          .courses-grid { grid-template-columns: 1fr; }
         }
       `}</style>
 
@@ -559,7 +631,7 @@ export default function DriversManagement({ token }) {
         <div className="drivers-header">
           <div className="header-titles">
             <h2>Gestión de Conductores</h2>
-            <p>Administra personal, licencias (multicategoría) y salud</p>
+            <p>Administra personal, licencias (multicategoría), cursos y salud</p>
           </div>
           
           <div className="header-actions">
@@ -589,11 +661,19 @@ export default function DriversManagement({ token }) {
             </div>
           ) : (
             filteredDrivers.map(driver => {
-              // Buscar si tiene un vehículo asignado para mostrarlo en la tarjeta
               const assignedDevice = devices.find(d => d.attributes?.driverId === driver.id);
+              const driverCourses = driver.attributes?.courses || {};
+              const hasCourses = Object.values(driverCourses).some(val => val && val !== '');
+              
+              // Verificamos estado documental (Rojo o Verde)
+              const cardStatusColor = getDocumentStatusColor(driver);
 
               return (
-                <div key={driver.id} className="driver-card">
+                <div 
+                  key={driver.id} 
+                  className="driver-card" 
+                  style={{ border: `2px solid ${cardStatusColor}` }} // BORDE DINÁMICO
+                >
                   <div className="driver-photo">
                     {driver.attributes?.photo ? (
                       <img src={driver.attributes.photo} alt={driver.name} />
@@ -608,13 +688,11 @@ export default function DriversManagement({ token }) {
                   )}
 
                   <div className="driver-badges">
-                    {/* Tarjeta del vehículo asigando (Si lo tiene) */}
                     {assignedDevice && (
                       <span className="badge badge-vehicle" title="Vehículo Asignado">
                         🚙 {assignedDevice.name}
                       </span>
                     )}
-
                     {driver.attributes?.bloodType && (
                       <span className="badge">🩸 {driver.attributes.bloodType}</span>
                     )}
@@ -633,17 +711,40 @@ export default function DriversManagement({ token }) {
                     
                     if (licArray.length > 0) {
                       return (
-                        <div className="driver-badges" style={{ marginBottom: '15px' }}>
-                          {licArray.map((lic, idx) => (
-                            <span key={idx} className="badge badge-license">
-                              🪪 {lic.category} (Vence: {lic.expiration || 'Sin fecha'})
-                            </span>
-                          ))}
+                        <div className="driver-badges" style={{ marginBottom: '10px' }}>
+                          {licArray.map((lic, idx) => {
+                            const isExpired = lic.expiration && lic.expiration < new Date().toISOString().split('T')[0];
+                            return (
+                              <span key={idx} className="badge badge-license" style={isExpired ? {backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#FCA5A5', borderColor: 'rgba(239, 68, 68, 0.4)'} : {}}>
+                                🪪 {lic.category} (Vence: {lic.expiration || 'Sin fecha'})
+                              </span>
+                            );
+                          })}
                         </div>
                       );
                     }
                     return null;
                   })()}
+
+                  {/* Vencimiento de Cursos */}
+                  {hasCourses && (
+                    <div className="course-container">
+                      <div style={{ fontSize: '10px', color: '#60A5FA', textTransform: 'uppercase', marginBottom: '8px', fontWeight: 'bold' }}>🎓 Vencimiento de Cursos</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                        {COURSE_LIST.map(course => {
+                          if (driverCourses[course.key]) {
+                            const isCourseExpired = driverCourses[course.key] < new Date().toISOString().split('T')[0];
+                            return (
+                              <div key={course.key} style={{ fontSize: '10px', color: isCourseExpired ? '#FCA5A5' : '#D1D5DB', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={course.label}>
+                                • {course.label}: <span style={{ color: isCourseExpired ? '#EF4444' : 'white', fontWeight: 'bold' }}>{driverCourses[course.key]}</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {driver.attributes?.restrictions && (
                     <div className="restriction-text">
@@ -687,7 +788,7 @@ export default function DriversManagement({ token }) {
                       onChange={handleImageUpload}
                     />
                   </div>
-                  <span className="photo-hint">Clic para subir foto (Alta Calidad)</span>
+                  <span className="photo-hint">Clic para subir foto (Se recortará y adaptará automáticamente)</span>
                 </div>
 
                 <div className="form-group">
@@ -702,7 +803,6 @@ export default function DriversManagement({ token }) {
                   />
                 </div>
 
-                {/* NUEVA ZONA DE ASIGNACIÓN DE VEHÍCULO */}
                 <div className="form-group" style={{ backgroundColor: 'rgba(16, 185, 129, 0.05)', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '10px', borderRadius: '8px' }}>
                   <label className="form-label" style={{ color: '#34D399', fontWeight: 'bold' }}>🚙 Asignar a Vehículo</label>
                   <select 
@@ -826,6 +926,30 @@ export default function DriversManagement({ token }) {
                       </button>
                     </div>
                   ))}
+                </div>
+
+                {/* VIGENCIA DE CURSOS */}
+                <div className="form-group" style={{ backgroundColor: '#111827', padding: '15px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                  <label className="form-label" style={{ color: '#60A5FA', borderBottom: '1px dashed #374151', paddingBottom: '8px', marginBottom: '15px' }}>🎓 Vigencia de Cursos (Opcional)</label>
+                  <div className="courses-grid">
+                    {COURSE_LIST.map(course => (
+                      <div key={course.key} style={{ display: 'flex', flexDirection: 'column' }}>
+                        <label style={{ fontSize: '10px', color: '#9CA3AF', marginBottom: '4px', textTransform: 'uppercase' }}>
+                          {course.label}
+                        </label>
+                        <input 
+                          type="date" 
+                          className="form-input" 
+                          value={formData.courses[course.key] || ''} 
+                          onChange={e => setFormData({
+                            ...formData, 
+                            courses: { ...formData.courses, [course.key]: e.target.value }
+                          })} 
+                          style={{ padding: '8px', fontSize: '12px' }}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="form-group">
