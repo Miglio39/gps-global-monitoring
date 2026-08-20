@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
@@ -53,12 +53,18 @@ export default function LiveDashboard({ devices, positions }) {
   // === ESTADOS PARA CONDUCTORES ===
   const [drivers, setDrivers] = useState([]);
   
-  // NUEVO: Estado para ver la Tarjeta del Conductor
+  // Estado para ver la Tarjeta del Conductor
   const [driverViewModal, setDriverViewModal] = useState({ isOpen: false, driver: null });
 
   // === CONFIGURACIÓN DE MAPAS ===
   const [mapStyle, setMapStyle] = useState('streets'); 
   const [showLayerMenu, setShowLayerMenu] = useState(false); 
+
+  // === NUEVOS ESTADOS PARA NOTIFICACIONES (CAMPANITA) ===
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [speedAlertLimit, setSpeedAlertLimit] = useState(80); // Límite por defecto (km/h)
+  const lastNotificationTimeRef = useRef({});
 
   const MAP_TILES = {
     dark: { name: '🌙 Oscuro', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© CartoDB' },
@@ -121,6 +127,7 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
+  // === LÓGICA DE ALARMA DE ENCENDIDO ===
   useEffect(() => {
     try {
       const hasNotificationAPI = 'Notification' in window;
@@ -181,6 +188,69 @@ export default function LiveDashboard({ devices, positions }) {
       console.error("Error crítico general manejado:", error);
     }
   }, [positions, armedDevices, devices]);
+
+ // === NUEVA LÓGICA: DETECTOR DE EXCESO DE VELOCIDAD CON SONIDO ===
+  useEffect(() => {
+    let hasChanges = false;
+    let newAlerts = [];
+    const now = Date.now();
+
+    // 1. Revisamos todos los vehículos buscando infractores
+    Object.keys(positions).forEach(deviceIdStr => {
+      const deviceId = parseInt(deviceIdStr);
+      const pos = positions[deviceId];
+      
+      if (pos) {
+        const speedKmh = pos.speed * 1.852; // Nudos a km/h
+        
+        if (speedKmh > speedAlertLimit) {
+          const lastTime = lastNotificationTimeRef.current[deviceId] || 0;
+          
+          // Cooldown de 1 minuto por vehículo
+          if (now - lastTime > 60000) {
+            const deviceName = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
+            
+            newAlerts.push({
+              id: now + Math.random(),
+              deviceId,
+              message: `Exceso de vel: ${deviceName} (${speedKmh.toFixed(1)} km/h)`,
+              time: now,
+              read: false
+            });
+            
+            lastNotificationTimeRef.current[deviceId] = now;
+            hasChanges = true;
+          }
+        }
+      }
+    });
+
+    // 2. Si detectamos infractores nuevos, reproducimos el sonido y actualizamos la lista
+    if (hasChanges) {
+      try {
+        // Puedes cambiar esta URL por un archivo local como '/notificacion.mp3' en tu carpeta public
+        const notifSound = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
+        notifSound.play().catch(e => console.warn("Audio bloqueado por el navegador:", e));
+      } catch (error) {
+        console.error("Error reproduciendo sonido de notificación", error);
+      }
+
+      setNotifications(prev => {
+        const combined = [...newAlerts, ...prev];
+        return combined.slice(0, 50); // Guardamos máximo 50
+      });
+    }
+  }, [positions, speedAlertLimit, devices]);
+
+  // Funciones auxiliares para controlar la campanita visual
+  const markAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  };
+  const markAsRead = (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+  const unreadCount = notifications.filter(n => !n.read).length;
+  // =======================================================
 
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online' && !d.disabled).length;
@@ -333,29 +403,97 @@ export default function LiveDashboard({ devices, positions }) {
 
       {/* MAPA */}
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
-        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}>
-          <div 
-            onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); }}
-            title="Cambiar vista del mapa"
-            style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
-            </svg>
+        
+        {/* MENÚ LATERAL FLOTANTE (VISTA DE MAPA Y NOTIFICACIONES) */}
+        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          
+          {/* 1. BOTÓN DE CAPAS DEL MAPA */}
+          <div style={{ position: 'relative' }}>
+            <div 
+              onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); setShowNotifications(false); }}
+              title="Cambiar vista del mapa"
+              style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
+              </svg>
+            </div>
+
+            {showLayerMenu && (
+              <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
+                {Object.keys(MAP_TILES).map((key) => (
+                  <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
+                    {MAP_TILES[key].name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {showLayerMenu && (
-            <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
-              {Object.keys(MAP_TILES).map((key) => (
-                <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
-                  {MAP_TILES[key].name}
-                </button>
-              ))}
+          {/* 2. NUEVA CAMPANITA DE NOTIFICACIONES */}
+          <div style={{ position: 'relative' }}>
+            <div 
+              onClick={(e) => { e.stopPropagation(); setShowNotifications(!showNotifications); setShowLayerMenu(false); }} 
+              title="Notificaciones y Alertas" 
+              style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: unreadCount > 0 ? '#F59E0B' : '#9CA3AF', transition: 'all 0.2s ease', position: 'relative' }}
+            >
+              <span style={{ fontSize: '18px' }}>🔔</span>
+              {unreadCount > 0 && (
+                 <div style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#EF4444', color: 'white', fontSize: '10px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', border: '2px solid #111827' }}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                 </div>
+              )}
             </div>
-          )}
+
+            {/* Panel Desplegable de las Alertas */}
+            {showNotifications && (
+               <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', padding: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', width: '280px', maxHeight: '400px', overflowY: 'auto' }}>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #374151', paddingBottom: '10px', marginBottom: '10px' }}>
+                     <h4 style={{ margin: 0, color: 'white', fontSize: '14px' }}>Alertas en Vivo</h4>
+                     <button onClick={(e) => { e.stopPropagation(); markAllAsRead(); }} style={{ background: 'none', border: 'none', color: '#60A5FA', fontSize: '11px', cursor: 'pointer' }}>Marcar leídas</button>
+                  </div>
+                  
+                  {/* Configuración Rápida de Límite de Velocidad */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px', backgroundColor: '#1F2937', padding: '8px', borderRadius: '6px' }}>
+                     <label style={{ fontSize: '11px', color: '#9CA3AF', flex: 1, fontWeight: 'bold' }}>Límite (km/h):</label>
+                     <input 
+                        type="number" 
+                        value={speedAlertLimit} 
+                        onChange={(e) => setSpeedAlertLimit(Number(e.target.value))} 
+                        onClick={e => e.stopPropagation()} 
+                        style={{ width: '50px', backgroundColor: '#0B1120', color: 'white', border: '1px solid #374151', borderRadius: '4px', padding: '4px', textAlign: 'center', fontSize: '12px', outline: 'none' }} 
+                     />
+                  </div>
+
+                  {/* Lista de Vehículos Infractores */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                     {notifications.length === 0 ? (
+                        <p style={{ margin: 0, fontSize: '12px', color: '#6B7280', textAlign: 'center', padding: '20px 0' }}>No hay alertas recientes</p>
+                     ) : (
+                        notifications.map(n => (
+                           <div key={n.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: n.read ? 'transparent' : 'rgba(245, 158, 11, 0.1)', borderLeft: n.read ? '2px solid transparent' : '2px solid #F59E0B', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.2s' }} onClick={(e) => { e.stopPropagation(); markAsRead(n.id); }}>
+                              <span style={{ fontSize: '12px', color: n.read ? '#D1D5DB' : '#F3F4F6', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</span>
+                              <span style={{ fontSize: '9px', color: '#6B7280', marginTop: '4px' }}>{new Date(n.time).toLocaleTimeString()}</span>
+                           </div>
+                        ))
+                     )}
+                  </div>
+               </div>
+            )}
+          </div>
         </div>
 
-        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
+        <MapContainer 
+          center={[4.142, -73.626]} 
+          zoom={13} 
+          style={{ height: '100%', width: '100%' }} 
+          ref={setMap} 
+          onClick={() => {
+            setShowLayerMenu(false);
+            setShowNotifications(false);
+          }}
+        >
           <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
 
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
