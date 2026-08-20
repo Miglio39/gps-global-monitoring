@@ -10,6 +10,7 @@ import WorkRoutesReport from '../components/WorkRoutesReport';
 import Geofences from '../components/Geofences';
 import ShareLocation from '../components/ShareLocation';
 import Maintenance from '../components/Maintenance';
+import DriversManagement from '../components/DriversManagement';
 
 const MenuIcon = ({ path }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -78,10 +79,10 @@ export default function Dashboard() {
           const devs = await resDevices.json();
           const posArray = await resPositions.json();
           
-          setDevices(devs);
           const posMap = {};
           
           posArray.forEach(p => { posMap[p.deviceId] = p; });
+          setDevices(devs);
           setPositions(posMap);
         }
       } catch (error) { 
@@ -261,11 +262,14 @@ export default function Dashboard() {
               <MenuIcon path="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13" /> 
             </div>
 
-            <div  onClick={() => setActiveTab('mantenimientos')}   title="Mantenimientos de Flota"   style={{...styles.navItem, ...(activeTab === 'mantenimientos' ? styles.navItemActive : {})}}>
-<MenuIcon path="M18.92 6C18.72 5.42 18.16 5 17.54 5H6.46C5.84 5 5.29 5.42 5.08 6L3 12V20C3 20.55 3.45 21 4 21H5C5.55 21 6 20.55 6 20V19H18V20C18 20.55 18.45 21 19 21H20C20.55 21 21 20.55 21 20V12L18.92 6Z" />            </div>
+            <div onClick={() => setActiveTab('mantenimientos')} title="Mantenimientos de Flota" style={{...styles.navItem, ...(activeTab === 'mantenimientos' ? styles.navItemActive : {})}}>
+              <MenuIcon path="M18.92 6C18.72 5.42 18.16 5 17.54 5H6.46C5.84 5 5.29 5.42 5.08 6L3 12V20C3 20.55 3.45 21 4 21H5C5.55 21 6 20.55 6 20V19H18V20C18 20.55 18.45 21 19 21H20C20.55 21 21 20.55 21 20V12L18.92 6Z" />            
+            </div>
 
-
-            
+            {/* BOTÓN MÓDULO CONDUCTORES */}
+            <div onClick={() => setActiveTab('drivers')} title="Gestión de Conductores" style={{...styles.navItem, ...(activeTab === 'drivers' ? styles.navItemActive : {})}}>
+              <MenuIcon path="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" /> 
+            </div>
             
             {/* EL PANEL DE ADMINISTRACIÓN SIGUE ESTRICTAMENTE PROTEGIDO SÓLO PARA ADMINS */}
             {currentUser?.administrator && (
@@ -332,6 +336,9 @@ export default function Dashboard() {
             {activeTab === 'alerts' && <Alerts devices={devices} token={token} />} 
             {activeTab === 'share' && <ShareLocation devices={devices} token={token} />}
             {activeTab === 'mantenimientos' && <Maintenance devices={devices} token={token} />}
+            
+            {/* RENDERIZADO DEL NUEVO MÓDULO DE CONDUCTORES */}
+            {activeTab === 'drivers' && <DriversManagement token={token} />}
             
             {/* EL PANEL DE ADMINISTRACIÓN SIGUE ESTRICTAMENTE PROTEGIDO SÓLO PARA ADMINS */}
             {currentUser?.administrator && activeTab === 'admin' && <AdminPanel devices={devices} token={token} currentUser={currentUser} />}
