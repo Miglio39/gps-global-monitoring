@@ -18,7 +18,7 @@ export default function AdminPanel({ devices, token, currentUser }) {
       <div className="admin-main" style={{maxWidth: '1200px', margin: '0 auto'}}>
         <h2 style={{color:'white', margin:'0 0 20px 0'}}>Panel de Administración Global</h2>
         
-        {/* PESTAÑAS DE NAVEGACIÓN RESPONSIVAS */}
+        {/* PESTAÑAS DE NAVEGACIÓN RESPONSIVASS */}
         <div className="admin-tabs" style={{ display: 'flex', gap: '10px', marginBottom: '25px', borderBottom: '1px solid #1F2937', paddingBottom: '15px' }}>
           <button 
             className="admin-tab-btn"
