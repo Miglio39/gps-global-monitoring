@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
@@ -37,7 +37,7 @@ export default function LiveDashboard({ devices, positions }) {
   const [hasInitialCentered, setHasCentered] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [filter, setFilter] = useState('all');
-
+  
   const [searchTerm, setSearchTerm] = useState('');
 
   // Lógica Responsive
@@ -50,33 +50,34 @@ export default function LiveDashboard({ devices, positions }) {
   const [iconEditModal, setIconEditModal] = useState({ isOpen: false, device: null });
   const [localCategories, setLocalCategories] = useState({}); 
 
-  // === ESTADOS PARA CONDUCTORES ===
+  // === ESTADOS RECUPERADOS PARA CONDUCTORES ===
   const [drivers, setDrivers] = useState([]);
-  
-  // Estado para ver la Tarjeta del Conductor
   const [driverViewModal, setDriverViewModal] = useState({ isOpen: false, driver: null });
 
   // === CONFIGURACIÓN DE MAPAS ===
   const [mapStyle, setMapStyle] = useState('streets'); 
   const [showLayerMenu, setShowLayerMenu] = useState(false); 
 
-  // === NUEVOS ESTADOS PARA NOTIFICACIONES (CAMPANITA) ===
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [speedAlertLimit, setSpeedAlertLimit] = useState(80); // Límite por defecto (km/h)
-  const lastNotificationTimeRef = useRef({});
-
   const MAP_TILES = {
-    dark: { name: '🌙 Oscuro', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© CartoDB' },
-    googleHybrid: { name: '🌍 Híbrido', url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attribution: '© Google Maps' },
-    googleSat: { name: '🛰️ Satélite', url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attribution: '© Google Maps' },
-    streets: { name: '🗺️ Calles', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap' }
+    dark: { name: '🌙 Oscuro', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; CartoDB' },
+    googleHybrid: { name: '🌍 Híbrido', url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attribution: '&copy; Google Maps' },
+    googleSat: { name: '🛰️ Satélite', url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attribution: '&copy; Google Maps' },
+    streets: { name: '🗺️ Calles', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap' }
   };
 
   const token = localStorage.getItem('traccar_token');
   const getDevicePosition = (deviceId) => positions[deviceId];
 
-  // 1. CARGAMOS LA LISTA DE CONDUCTORES DE FORMA SILENCIOSA
+  // === NÚCLEO: LÓGICA DE SUSPENSIÓN HÍBRIDA ===
+  const checkIsSuspended = (device) => {
+    if (device.disabled) return true; 
+    if (device.expirationTime && new Date(device.expirationTime) < new Date()) {
+      return true; 
+    }
+    return false;
+  };
+
+  // === LÓGICA RECUPERADA: CARGAR CONDUCTORES EN SEGUNDO PLANO ===
   useEffect(() => {
     const fetchDrivers = async () => {
       if (!token) return;
@@ -93,12 +94,12 @@ export default function LiveDashboard({ devices, positions }) {
     };
     
     fetchDrivers();
-    // Lo refrescamos cada 10 seg por si asignas un conductor desde el otro módulo
+    // Refresco cada 10 seg por si se asigna un conductor nuevo
     const interval = setInterval(fetchDrivers, 10000); 
     return () => clearInterval(interval);
   }, [token]);
 
-  // Creamos un diccionario rápido para buscar conductores por ID
+  // Diccionario ultra rápido para buscar conductores por ID
   const driverMap = {};
   drivers.forEach(d => { driverMap[d.id] = d; });
 
@@ -127,135 +128,11 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-  // === LÓGICA DE ALARMA DE ENCENDIDO ===
-  useEffect(() => {
-    try {
-      const hasNotificationAPI = 'Notification' in window;
-
-      if (hasNotificationAPI && Notification.permission !== "granted" && Notification.permission !== "denied") {
-        Notification.requestPermission().catch(e => console.warn("Permisos ignorados", e));
-      }
-
-      let alarmTriggered = false;
-      let deviceNameTriggered = '';
-
-      const updatedArmedDevices = { ...armedDevices }; 
-
-      Object.keys(armedDevices).forEach(deviceIdStr => {
-        const deviceId = parseInt(deviceIdStr);
-        const isArmed = armedDevices[deviceId];
-        const pos = positions[deviceId];
-
-        if (pos) {
-          const isMoving = pos.speed > 0;
-          const physicalIgnition = pos.attributes?.ignition;
-          const isEngineOn = isMoving || physicalIgnition;
-
-          if (isArmed && isEngineOn) {
-            alarmTriggered = true;
-            deviceNameTriggered = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
-            updatedArmedDevices[deviceId] = false; 
-          }
-        }
-      });
-
-      if (alarmTriggered) {
-        setArmedDevices(updatedArmedDevices);
-
-        try {
-          const alarmSound = new Audio('/alarma-agresiva.mp3'); 
-          alarmSound.loop = false;
-          alarmSound.play().catch(e => console.warn("Audio bloqueado por falta de interacción:", e));
-        } catch (audioErr) {
-          console.error("Error en el objeto Audio:", audioErr);
-        }
-
-        try {
-          if (hasNotificationAPI && Notification.permission === "granted") {
-            new Notification("🚨 ¡ALERTA DE SEGURIDAD!", {
-              body: `El vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`,
-              icon: '/favicon.ico', 
-              vibrate: [500, 250, 500, 250, 500] 
-            });
-          } else {
-            alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`);
-          }
-        } catch (notifError) {
-          alert(`🚨 ¡ALERTA DE SEGURIDAD!\n\nEl vehículo "${deviceNameTriggered}" ha sido ENCENDIDO o MOVIDO.`);
-        }
-      }
-    } catch (error) {
-      console.error("Error crítico general manejado:", error);
-    }
-  }, [positions, armedDevices, devices]);
-
- // === NUEVA LÓGICA: DETECTOR DE EXCESO DE VELOCIDAD CON SONIDO ===
-  useEffect(() => {
-    let hasChanges = false;
-    let newAlerts = [];
-    const now = Date.now();
-
-    // 1. Revisamos todos los vehículos buscando infractores
-    Object.keys(positions).forEach(deviceIdStr => {
-      const deviceId = parseInt(deviceIdStr);
-      const pos = positions[deviceId];
-      
-      if (pos) {
-        const speedKmh = pos.speed * 1.852; // Nudos a km/h
-        
-        if (speedKmh > speedAlertLimit) {
-          const lastTime = lastNotificationTimeRef.current[deviceId] || 0;
-          
-          // Cooldown de 1 minuto por vehículo
-          if (now - lastTime > 60000) {
-            const deviceName = devices.find(d => d.id === deviceId)?.name || 'Vehículo';
-            
-            newAlerts.push({
-              id: now + Math.random(),
-              deviceId,
-              message: `Exceso de vel: ${deviceName} (${speedKmh.toFixed(1)} km/h)`,
-              time: now,
-              read: false
-            });
-            
-            lastNotificationTimeRef.current[deviceId] = now;
-            hasChanges = true;
-          }
-        }
-      }
-    });
-
-    // 2. Si detectamos infractores nuevos, reproducimos el sonido y actualizamos la lista
-    if (hasChanges) {
-      try {
-        // Puedes cambiar esta URL por un archivo local como '/notificacion.mp3' en tu carpeta public
-        const notifSound = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
-        notifSound.play().catch(e => console.warn("Audio bloqueado por el navegador:", e));
-      } catch (error) {
-        console.error("Error reproduciendo sonido de notificación", error);
-      }
-
-      setNotifications(prev => {
-        const combined = [...newAlerts, ...prev];
-        return combined.slice(0, 50); // Guardamos máximo 50
-      });
-    }
-  }, [positions, speedAlertLimit, devices]);
-
-  // Funciones auxiliares para controlar la campanita visual
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
-  const markAsRead = (id) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
-  const unreadCount = notifications.filter(n => !n.read).length;
-  // =======================================================
-
+  // KPIs con validación de suspensión
   const totalCount = devices.length;
-  const onlineCount = devices.filter(d => d.status === 'online' && !d.disabled).length;
-  const unknownCount = devices.filter(d => !d.lastUpdate && !d.disabled).length; 
-  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate && !d.disabled).length; 
+  const onlineCount = devices.filter(d => d.status === 'online' && !checkIsSuspended(d)).length;
+  const unknownCount = devices.filter(d => !d.lastUpdate && !checkIsSuspended(d)).length; 
+  const offlineCount = devices.filter(d => d.status !== 'online' && d.lastUpdate && !checkIsSuspended(d)).length; 
   const movingCount = Object.values(positions).filter(p => p && p.speed > 0).length;
   const stoppedCount = Object.values(positions).filter(p => p && p.speed === 0).length;
 
@@ -274,12 +151,7 @@ export default function LiveDashboard({ devices, positions }) {
           'Authorization': `Basic ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          id: 0,
-          deviceId: deviceId,
-          type: 'custom',
-          attributes: { data: commandData }
-        })
+        body: JSON.stringify({ id: 0, deviceId: deviceId, type: 'custom', attributes: { data: commandData } })
       });
 
       if (response.ok) {
@@ -303,12 +175,11 @@ export default function LiveDashboard({ devices, positions }) {
 
     try {
       const updatedDevice = { ...device, category: newCategory };
-      const response = await fetch(`${API_BASE}/api/devices/${device.id}`, {
+      await fetch(`${API_BASE}/api/devices/${device.id}`, {
         method: 'PUT',
         headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedDevice)
       });
-      if (!response.ok) { throw new Error('No se pudo guardar la configuración'); }
     } catch (error) { console.error(error); }
   };
 
@@ -326,37 +197,34 @@ export default function LiveDashboard({ devices, positions }) {
     return { text: null, color: '#10B981' };
   };
 
-  // === MARCADOR ESTILO SPRITE ===
-  const createCustomMarker = (device, speed, status) => {
+  const createCustomMarker = (device, speed, status, isSuspended) => {
     const isMoving = speed > 0;
     const isUnknown = !device.lastUpdate; 
-
+    
     let statusColor = '#8B5CF6'; 
-    if (device.disabled) statusColor = '#374151'; 
+    if (isSuspended) statusColor = '#374151'; 
     else if (isUnknown) statusColor = '#9CA3AF'; 
     else if (status !== 'online') statusColor = '#EF4444'; 
     else if (isMoving) statusColor = '#10B981'; 
 
     const categoryKey = localCategories[device.id] || device.category || 'automovil';
     const spriteUrl = VEHICLE_SPRITES[categoryKey] ? VEHICLE_SPRITES[categoryKey].url : VEHICLE_SPRITES.automovil.url;
-
+    
     const html = `
-      <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%); opacity: ${device.disabled ? '0.6' : '1'};">
+      <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%); opacity: ${isSuspended ? '0.6' : '1'};">
         <img 
           src="${spriteUrl}" 
           onerror="this.onerror=null;this.src='https://img.icons8.com/fluency/96/car.png';"
-          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5)) ${device.disabled ? 'grayscale(100%)' : ''};" 
+          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5)) ${isSuspended ? 'grayscale(100%)' : ''};" 
           alt="sprite" 
         />
         <div style="background: rgba(15, 23, 42, 0.9); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: 'Inter', Arial, sans-serif; font-weight: 700; color: #F3F4F6; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); border-bottom: 3px solid ${statusColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.4); margin-top: -4px;">
-          ${device.disabled ? '🚫 ' : ''}${device.name}
+          ${isSuspended ? '🚫 ' : ''}${device.name}
         </div>
       </div>
     `;
-
-    return L.divIcon({ 
-      className: 'traccar-videogame-pin', html: html, iconAnchor: [10, 10], popupAnchor: [0, -25] 
-    });
+    
+    return L.divIcon({ className: 'traccar-videogame-pin', html: html, iconAnchor: [10, 10], popupAnchor: [0, -25] });
   };
 
   const createClusterCustomIcon = function (cluster) {
@@ -374,15 +242,18 @@ export default function LiveDashboard({ devices, positions }) {
     const isUnknown = !device.lastUpdate;
     const isOnline = device.status === 'online';
     const isOffline = device.status !== 'online' && !isUnknown; 
+    
+    const isSuspended = checkIsSuspended(device);
 
     let matchesStatus = true;
-    if (filter === 'moving') matchesStatus = isMoving && isOnline && !device.disabled;
-    if (filter === 'stopped') matchesStatus = isStopped && isOnline && !device.disabled;
-    if (filter === 'online') matchesStatus = isOnline && !device.disabled;
-    if (filter === 'offline') matchesStatus = isOffline && !device.disabled;
-    if (filter === 'unknown') matchesStatus = isUnknown && !device.disabled; 
+    if (filter === 'moving') matchesStatus = isMoving && isOnline && !isSuspended;
+    if (filter === 'stopped') matchesStatus = isStopped && isOnline && !isSuspended;
+    if (filter === 'online') matchesStatus = isOnline && !isSuspended;
+    if (filter === 'offline') matchesStatus = isOffline && !isSuspended;
+    if (filter === 'unknown') matchesStatus = isUnknown && !isSuspended; 
 
     const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
+
     return matchesStatus && matchesSearch; 
   });
 
@@ -400,150 +271,85 @@ export default function LiveDashboard({ devices, positions }) {
 
   return (
     <main style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
-
-      {/* MAPA */}
+      
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
-        
-        {/* MENÚ LATERAL FLOTANTE (VISTA DE MAPA Y NOTIFICACIONES) */}
-        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          
-          {/* 1. BOTÓN DE CAPAS DEL MAPA */}
-          <div style={{ position: 'relative' }}>
-            <div 
-              onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); setShowNotifications(false); }}
-              title="Cambiar vista del mapa"
-              style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
-              </svg>
-            </div>
-
-            {showLayerMenu && (
-              <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
-                {Object.keys(MAP_TILES).map((key) => (
-                  <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
-                    {MAP_TILES[key].name}
-                  </button>
-                ))}
-              </div>
-            )}
+        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}>
+          <div 
+            onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); }}
+            title="Cambiar vista del mapa"
+            style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
+            </svg>
           </div>
 
-          {/* 2. NUEVA CAMPANITA DE NOTIFICACIONES */}
-          <div style={{ position: 'relative' }}>
-            <div 
-              onClick={(e) => { e.stopPropagation(); setShowNotifications(!showNotifications); setShowLayerMenu(false); }} 
-              title="Notificaciones y Alertas" 
-              style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: unreadCount > 0 ? '#F59E0B' : '#9CA3AF', transition: 'all 0.2s ease', position: 'relative' }}
-            >
-              <span style={{ fontSize: '18px' }}>🔔</span>
-              {unreadCount > 0 && (
-                 <div style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#EF4444', color: 'white', fontSize: '10px', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', border: '2px solid #111827' }}>
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                 </div>
-              )}
+          {showLayerMenu && (
+            <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
+              {Object.keys(MAP_TILES).map((key) => (
+                <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
+                  {MAP_TILES[key].name}
+                </button>
+              ))}
             </div>
-
-            {/* Panel Desplegable de las Alertas */}
-            {showNotifications && (
-               <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px', padding: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', width: '280px', maxHeight: '400px', overflowY: 'auto' }}>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #374151', paddingBottom: '10px', marginBottom: '10px' }}>
-                     <h4 style={{ margin: 0, color: 'white', fontSize: '14px' }}>Alertas en Vivo</h4>
-                     <button onClick={(e) => { e.stopPropagation(); markAllAsRead(); }} style={{ background: 'none', border: 'none', color: '#60A5FA', fontSize: '11px', cursor: 'pointer' }}>Marcar leídas</button>
-                  </div>
-                  
-                  {/* Configuración Rápida de Límite de Velocidad */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px', backgroundColor: '#1F2937', padding: '8px', borderRadius: '6px' }}>
-                     <label style={{ fontSize: '11px', color: '#9CA3AF', flex: 1, fontWeight: 'bold' }}>Límite (km/h):</label>
-                     <input 
-                        type="number" 
-                        value={speedAlertLimit} 
-                        onChange={(e) => setSpeedAlertLimit(Number(e.target.value))} 
-                        onClick={e => e.stopPropagation()} 
-                        style={{ width: '50px', backgroundColor: '#0B1120', color: 'white', border: '1px solid #374151', borderRadius: '4px', padding: '4px', textAlign: 'center', fontSize: '12px', outline: 'none' }} 
-                     />
-                  </div>
-
-                  {/* Lista de Vehículos Infractores */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                     {notifications.length === 0 ? (
-                        <p style={{ margin: 0, fontSize: '12px', color: '#6B7280', textAlign: 'center', padding: '20px 0' }}>No hay alertas recientes</p>
-                     ) : (
-                        notifications.map(n => (
-                           <div key={n.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: n.read ? 'transparent' : 'rgba(245, 158, 11, 0.1)', borderLeft: n.read ? '2px solid transparent' : '2px solid #F59E0B', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', transition: 'all 0.2s' }} onClick={(e) => { e.stopPropagation(); markAsRead(n.id); }}>
-                              <span style={{ fontSize: '12px', color: n.read ? '#D1D5DB' : '#F3F4F6', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</span>
-                              <span style={{ fontSize: '9px', color: '#6B7280', marginTop: '4px' }}>{new Date(n.time).toLocaleTimeString()}</span>
-                           </div>
-                        ))
-                     )}
-                  </div>
-               </div>
-            )}
-          </div>
+          )}
         </div>
 
-        <MapContainer 
-          center={[4.142, -73.626]} 
-          zoom={13} 
-          style={{ height: '100%', width: '100%' }} 
-          ref={setMap} 
-          onClick={() => {
-            setShowLayerMenu(false);
-            setShowNotifications(false);
-          }}
-        >
+        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
           <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
-
+          
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
             {filteredDevices.map(device => {
               const pos = getDevicePosition(device.id);
               if (!pos) return null; 
+              
+              const isSuspended = checkIsSuspended(device);
 
               const batteryInfo = getBatteryInfo(device, pos);
               const isMoving = pos.speed > 0;
               const rawIgnition = pos.attributes?.ignition;
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
+
               const isUnknown = !device.lastUpdate;
 
-              const estadoStr = device.disabled 
+              const estadoStr = isSuspended 
                 ? '🚫 Suspendido por Falta de Pago' 
                 : (isUnknown ? '⚪ Nunca conectado' : (device.status === 'online' ? '🟢 Conectado' : '🔴 Apagado'));
+              
               const ultimaConexion = device.lastUpdate ? new Date(device.lastUpdate).toLocaleString('es-CO') : 'Desconocida';
 
-              // VERIFICAR CONDUCTOR PARA EL GLOBO FLOTANTE DEL MAPA
+              // === MAGIA CONDUCTORES: BUSCAMOS SI ESTE VEHÍCULO TIENE CONDUCTOR ===
               const assignedDriver = device.attributes?.driverId ? driverMap[device.attributes.driverId] : null;
 
               return (
                 <Marker 
                   key={device.id} 
                   position={[pos.latitude, pos.longitude]} 
-                  icon={createCustomMarker(device, pos.speed, device.status)}
+                  icon={createCustomMarker(device, pos.speed, device.status, isSuspended)}
                   eventHandlers={{ click: () => handleDeviceClick(device, pos) }}
                 >
                   <Popup>
-                    <b style={{color: device.disabled ? '#EF4444' : 'black', fontSize:'13px', textDecoration: device.disabled ? 'line-through' : 'none'}}>
+                    <b style={{color: isSuspended ? '#EF4444' : 'black', fontSize:'13px', textDecoration: isSuspended ? 'line-through' : 'none'}}>
                       {device.name}
                     </b><br/>
-                    
-                    {/* INFO DEL CONDUCTOR EN EL GLOBO */}
-                    {assignedDriver && !device.disabled && (
+
+                    {/* MOSTRAMOS EL CONDUCTOR EN EL GLOBO SI EXISTE Y NO ESTÁ SUSPENDIDO */}
+                    {assignedDriver && !isSuspended && (
                       <span style={{color:'#3B82F6', fontSize:'11px', fontWeight: 'bold'}}>
                         👨‍✈️ Conductor: {assignedDriver.name}
                       </span>
                     )}
-                    {assignedDriver && !device.disabled && <br/>}
+                    {assignedDriver && !isSuspended && <br/>}
 
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
-                    <span style={{color: device.disabled ? '#EF4444' : '#666', fontSize:'11px', fontWeight: device.disabled ? 'bold' : 'normal'}}>
+                    <span style={{color: isSuspended ? '#EF4444' : '#666', fontSize:'11px', fontWeight: isSuspended ? 'bold' : 'normal'}}>
                       Estado: {estadoStr}
                     </span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Últ. conexión: {ultimaConexion}</span><br/>
-                    {hasIgnition && !device.disabled && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
-                    {batteryInfo.text && !device.disabled && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
-
+                    {hasIgnition && !isSuspended && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
+                    {batteryInfo.text && !isSuspended && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
+                    
                     <div style={{ marginTop: '10px' }}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); openStreetView(pos.latitude, pos.longitude); }}
@@ -585,15 +391,8 @@ export default function LiveDashboard({ devices, positions }) {
       )}
 
       {/* PANEL FLOTANTE DE UNIDADES */}
-      <div style={{ 
-        position: 'absolute', top: 15, right: 15, bottom: isListOpen ? 15 : 'auto', 
-        width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '380px') : '44px', 
-        height: isListOpen ? 'auto' : '44px', maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px',
-        backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', borderRadius: '14px', 
-        border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, display: 'flex', flexDirection: 'column', 
-        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' 
-      }}>
-
+      <div style={{ position: 'absolute', top: 15, right: 15, bottom: isListOpen ? 15 : 'auto', width: isListOpen ? (isMobile ? 'calc(100% - 30px)' : '380px') : '44px', height: isListOpen ? 'auto' : '44px', maxHeight: isListOpen ? 'calc(100% - 30px)' : '44px', backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(16px)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.08)', zIndex: 1000, display: 'flex', flexDirection: 'column', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)', overflow: 'hidden' }}>
+        
         <div style={{ padding: isListOpen ? '14px 16px' : '0', height: isListOpen ? 'auto' : '100%', borderBottom: isListOpen ? '1px solid rgba(255,255,255,0.08)' : 'none', display: 'flex', justifyContent: isListOpen ? 'space-between' : 'center', alignItems: 'center' }}>
           {isListOpen && (
             <div>
@@ -625,18 +424,18 @@ export default function LiveDashboard({ devices, positions }) {
               const isMoving = pos && pos.speed > 0;
               const isSelected = selectedDevice?.id === device.id;
               const isArmed = armedDevices[device.id] || false;
-
+              
               const isUnknown = !device.lastUpdate;
+              const isSuspended = checkIsSuspended(device);
 
-              // 🔴 LA MAGIA EN LA LISTA LATERAL: Colores y textos
               let statusDotColor = '#8B5CF6'; 
-              if (device.disabled) statusDotColor = '#374151'; // Suspendido es Gris oscuro
-              else if (isUnknown) statusDotColor = '#9CA3AF'; // Gris
-              else if (device.status !== 'online') statusDotColor = '#EF4444'; // Rojo
-              else if (isMoving) statusDotColor = '#10B981'; // Verde
+              if (isSuspended) statusDotColor = '#374151'; 
+              else if (isUnknown) statusDotColor = '#9CA3AF'; 
+              else if (device.status !== 'online') statusDotColor = '#EF4444'; 
+              else if (isMoving) statusDotColor = '#10B981'; 
 
               let listStatusText = '0 km/h';
-              if (device.disabled) listStatusText = '🚫 Servicio Suspendido';
+              if (isSuspended) listStatusText = '🚫 Servicio Suspendido';
               else if (isUnknown) listStatusText = 'Nunca conectado';
               else if (device.status !== 'online') listStatusText = 'Apagado';
               else if (pos) listStatusText = `${(pos.speed * 1.852).toFixed(0)} km/h`;
@@ -646,27 +445,27 @@ export default function LiveDashboard({ devices, positions }) {
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
 
-              // BUSCAMOS SI ESTE VEHÍCULO TIENE CONDUCTOR
+              // === CONDUCTOR PARA LA LISTA LATERAL ===
               const assignedDriver = device.attributes?.driverId ? driverMap[device.attributes.driverId] : null;
 
               return (
                 <div 
                   key={device.id} 
                   onClick={() => handleDeviceClick(device, pos)}
-                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', flexDirection: 'column', gap: '10px', opacity: device.disabled ? 0.6 : 1 }}
+                  style={{ padding: '12px', borderRadius: '10px', cursor: 'pointer', backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.18)' : 'rgba(255,255,255,0.02)', border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : (isArmed ? '1px solid rgba(234, 179, 8, 0.3)' : '1px solid rgba(255,255,255,0.04)'), transition: 'all 0.2s ease', display: 'flex', flexDirection: 'column', gap: '10px', opacity: isSuspended ? 0.6 : 1 }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: statusDotColor, boxShadow: `0 0 8px ${statusDotColor}`, flexShrink: 0 }}></div>
-
+                    
                     <div style={{ overflow: 'hidden', flex: 1 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600', textDecoration: device.disabled ? 'line-through' : 'none' }}>
-                          {device.disabled ? '🚫 ' : ''}{device.name}
+                        <strong style={{ color: isSelected ? '#60A5FA' : (isArmed ? '#FDE047' : '#F9FAFB'), fontSize: '12.5px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', fontWeight: '600', textDecoration: isSuspended ? 'line-through' : 'none' }}>
+                          {isSuspended ? '🚫 ' : ''}{device.name}
                         </strong>
-
+                        
                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0 }}>
-                          {hasIgnition && !device.disabled && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: finalIgnition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${finalIgnition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }} title={finalIgnition ? 'Motor Encendido' : 'Motor Apagado'}>
+                          {hasIgnition && !isSuspended && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: finalIgnition ? 'rgba(16, 185, 129, 0.15)' : 'rgba(107, 114, 128, 0.2)', border: `1px solid ${finalIgnition ? 'rgba(16, 185, 129, 0.3)' : 'rgba(107, 114, 128, 0.3)'}` }}>
                               <span style={{ fontSize: '10px' }}>🔑</span>
                               <span style={{ fontSize: '9px', color: finalIgnition ? '#10B981' : '#9CA3AF', fontWeight: '800' }}>
                                 {finalIgnition ? 'ON' : 'OFF'}
@@ -674,8 +473,8 @@ export default function LiveDashboard({ devices, positions }) {
                             </div>
                           )}
 
-                          {batteryInfo.text && !device.disabled && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }} title="Nivel de Batería">
+                          {batteryInfo.text && !isSuspended && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '2px 5px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
                               <span style={{ fontSize: '10px' }}>🔋</span>
                               <span style={{ fontSize: '9px', color: batteryInfo.color, fontWeight: '800' }}>
                                 {batteryInfo.text}
@@ -684,57 +483,22 @@ export default function LiveDashboard({ devices, positions }) {
                           )}
                         </div>
                       </div>
-
+                      
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                        <span style={{ fontSize: '11px', color: device.disabled ? '#EF4444' : '#9CA3AF', fontWeight: '500' }}>
+                        <span style={{ fontSize: '11px', color: isSuspended ? '#EF4444' : '#9CA3AF', fontWeight: '500' }}>
                           {listStatusText}
                         </span>
-
+                        
                         <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
-
-                          {/* 🚫 CONDICIÓN: Si está suspendido, le ocultamos los controles y le mandamos un aviso */}
-                          {device.disabled ? (
-                             <span style={{ fontSize: '10px', color: '#EF4444', fontWeight: 'bold', padding: '2px 0' }}>ADMINISTRACIÓN</span>
+                          
+                          {isSuspended ? (
+                             <span style={{ fontSize: '10px', color: '#EF4444', fontWeight: 'bold', padding: '2px 0' }}>COMUNICARSE CON ADMINISTRACIÓN</span>
                           ) : (
                             <>
-                              <button 
-                                title="Cambiar Ícono"
-                                onClick={(e) => { e.stopPropagation(); setIconEditModal({ isOpen: true, device: device }); }}
-                                style={{ backgroundColor: 'transparent', border: '1px solid rgba(59, 130, 246, 0.5)', color: '#60A5FA', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                                onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(59, 130, 246, 0.15)'; }}
-                                onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                              >
-                                ✏️ Ícono
-                              </button>
-
-                              <button 
-                                title={isArmed ? "Desactivar Alarma" : "Activar Alarma de Encendido"}
-                                onClick={(e) => { e.stopPropagation(); setArmedDevices(prev => ({...prev, [device.id]: !isArmed})); }}
-                                style={{ backgroundColor: isArmed ? 'rgba(234, 179, 8, 0.15)' : 'transparent', border: isArmed ? '1px solid #EAB308' : '1px solid rgba(156, 163, 175, 0.3)', color: isArmed ? '#EAB308' : '#9CA3AF', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                                onMouseEnter={(e) => { if(!isArmed) e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'; }}
-                                onMouseLeave={(e) => { if(!isArmed) e.target.style.backgroundColor = 'transparent'; }}
-                              >
-                                {isArmed ? '🔔 Vigilando' : '🔕 Vigilar'}
-                              </button>
-
-                              <button 
-                                title="Apagar Motor"
-                                onClick={() => handleEngineControl(device.id, device.name, true)}
-                                style={{ backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                                onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'; }}
-                                onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                              >
-                                Apagar
-                              </button>
-                              <button 
-                                title="Habilitar Encendido"
-                                onClick={() => handleEngineControl(device.id, device.name, false)}
-                                style={{ backgroundColor: 'transparent', border: '1px solid rgba(16, 185, 129, 0.5)', color: '#10B981', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
-                                onMouseEnter={(e) => { e.target.style.backgroundColor = 'rgba(16, 185, 129, 0.15)'; }}
-                                onMouseLeave={(e) => { e.target.style.backgroundColor = 'transparent'; }}
-                              >
-                                Activar
-                              </button>
+                              <button onClick={(e) => { e.stopPropagation(); setIconEditModal({ isOpen: true, device: device }); }} style={{ backgroundColor: 'transparent', border: '1px solid rgba(59, 130, 246, 0.5)', color: '#60A5FA', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer' }}>✏️ Ícono</button>
+                              <button onClick={(e) => { e.stopPropagation(); setArmedDevices(prev => ({...prev, [device.id]: !isArmed})); }} style={{ backgroundColor: isArmed ? 'rgba(234, 179, 8, 0.15)' : 'transparent', border: isArmed ? '1px solid #EAB308' : '1px solid rgba(156, 163, 175, 0.3)', color: isArmed ? '#EAB308' : '#9CA3AF', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer' }}>{isArmed ? '🔔 Vigilando' : '🔕 Vigilar'}</button>
+                              <button onClick={() => handleEngineControl(device.id, device.name, true)} style={{ backgroundColor: 'transparent', border: '1px solid rgba(239, 68, 68, 0.5)', color: '#EF4444', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer' }}>Apagar</button>
+                              <button onClick={() => handleEngineControl(device.id, device.name, false)} style={{ backgroundColor: 'transparent', border: '1px solid rgba(16, 185, 129, 0.5)', color: '#10B981', padding: '2px 6px', borderRadius: '5px', fontSize: '9px', fontWeight: '700', cursor: 'pointer' }}>Activar</button>
                             </>
                           )}
                         </div>
@@ -742,19 +506,14 @@ export default function LiveDashboard({ devices, positions }) {
                     </div>
                   </div>
 
-                  {/* 🟢 SECCIÓN DEL CONDUCTOR ASIGNADO (CLICKEABLE) */}
-                  {assignedDriver && !device.disabled && (
+                  {/* 🟢 ETIQUETA DEL CONDUCTOR ASIGNADO (CLICKEABLE) */}
+                  {assignedDriver && !isSuspended && (
                     <div 
                       onClick={(e) => { 
                         e.stopPropagation(); 
                         setDriverViewModal({ isOpen: true, driver: assignedDriver }); 
                       }}
-                      style={{ 
-                        display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', 
-                        backgroundColor: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '8px', 
-                        border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer',
-                        transition: 'all 0.2s ease'
-                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', backgroundColor: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer', transition: 'all 0.2s ease' }}
                       onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.1)'}
                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.2)'}
                       title="Ver información del conductor"
@@ -775,7 +534,6 @@ export default function LiveDashboard({ devices, positions }) {
                       <div style={{ fontSize: '14px', color: '#60A5FA' }}>ℹ️</div>
                     </div>
                   )}
-                  {/* ======================================================= */}
                 </div>
               )
             })}
@@ -787,55 +545,35 @@ export default function LiveDashboard({ devices, positions }) {
       {iconEditModal.isOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setIconEditModal({ isOpen: false, device: null })}>
           <div style={{ backgroundColor: '#111827', padding: '20px', borderRadius: '12px', border: '1px solid #374151', width: '90%', maxWidth: '420px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '15px' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, color: 'white', fontSize: '16px', textAlign: 'center' }}>
-              Seleccionar Vehículo<br/>
-              <span style={{fontSize: '12px', color: '#9CA3AF', fontWeight: 'normal'}}>
-                {iconEditModal.device?.name}
-              </span>
-            </h3>
+            <h3 style={{ margin: 0, color: 'white', fontSize: '16px', textAlign: 'center' }}>Seleccionar Vehículo<br/><span style={{fontSize: '12px', color: '#9CA3AF', fontWeight: 'normal'}}>{iconEditModal.device?.name}</span></h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', maxHeight: '60vh', overflowY: 'auto', padding: '5px' }}>
               {Object.keys(VEHICLE_SPRITES).map(key => {
                 const sprite = VEHICLE_SPRITES[key];
                 return (
-                  <button key={key} onClick={() => handleSaveIcon(key)} style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '12px 5px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'white', transition: 'all 0.2s' }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.2)'; e.currentTarget.style.borderColor = '#3B82F6'; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}>
+                  <button key={key} onClick={() => handleSaveIcon(key)} style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '12px 5px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'white' }}>
                     <img src={sprite.url} onError={(e) => { e.target.onerror = null; e.target.src = 'https://img.icons8.com/fluency/96/car.png'; }} style={{ width: '32px', height: '32px', objectFit: 'contain' }} alt={sprite.label} />
                     <span style={{ fontSize: '10px', fontWeight: 'bold', textAlign: 'center' }}>{sprite.label}</span>
                   </button>
                 )
               })}
             </div>
-            <button onClick={() => setIconEditModal({ isOpen: false, device: null })} style={{ marginTop: '5px', padding: '10px', borderRadius: '8px', backgroundColor: '#374151', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s' }} onMouseEnter={(e) => e.target.style.backgroundColor = '#4B5563'} onMouseLeave={(e) => e.target.style.backgroundColor = '#374151'}>Cancelar</button>
+            <button onClick={() => setIconEditModal({ isOpen: false, device: null })} style={{ marginTop: '5px', padding: '10px', borderRadius: '8px', backgroundColor: '#374151', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Cancelar</button>
           </div>
         </div>
       )}
 
-      {/* 🟢 NUEVO: MODAL DE INFORMACIÓN DEL CONDUCTOR (TARJETA DE IDENTIFICACIÓN) */}
+      {/* 🟢 MODAL DE INFORMACIÓN DEL CONDUCTOR (CREDENCIAL) */}
       {driverViewModal.isOpen && driverViewModal.driver && (
-        <div 
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(5px)' }} 
-          onClick={() => setDriverViewModal({ isOpen: false, driver: null })}
-        >
-          <div 
-            style={{ 
-              backgroundColor: '#111827', borderRadius: '16px', width: '90%', maxWidth: '350px', 
-              border: '1px solid #374151', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-              overflow: 'hidden', position: 'relative'
-            }} 
-            onClick={e => e.stopPropagation()}
-          >
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(5px)' }} onClick={() => setDriverViewModal({ isOpen: false, driver: null })}>
+          <div style={{ backgroundColor: '#111827', borderRadius: '16px', width: '90%', maxWidth: '350px', border: '1px solid #374151', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', overflow: 'hidden', position: 'relative' }} onClick={e => e.stopPropagation()}>
             {/* Cabecera Azul */}
             <div style={{ backgroundColor: '#2563EB', height: '80px', width: '100%', position: 'absolute', top: 0, zIndex: 0 }}></div>
             
-            <button 
-              onClick={() => setDriverViewModal({ isOpen: false, driver: null })}
-              style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', zIndex: 10, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
-            >
-              ✕
-            </button>
+            <button onClick={() => setDriverViewModal({ isOpen: false, driver: null })} style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', zIndex: 10, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>✕</button>
 
             <div style={{ padding: '25px 20px 20px 20px', position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               
-              {/* Foto de Perfil Grande */}
+              {/* Foto de Perfil */}
               <div style={{ width: '110px', height: '110px', borderRadius: '50%', border: '4px solid #111827', backgroundColor: '#374151', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.3)', marginBottom: '15px', marginTop: '10px' }}>
                 {driverViewModal.driver.attributes?.photo ? (
                   <img src={driverViewModal.driver.attributes.photo} alt={driverViewModal.driver.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -850,7 +588,6 @@ export default function LiveDashboard({ devices, positions }) {
               </p>
 
               <div style={{ width: '100%', marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                
                 {/* Teléfono */}
                 {driverViewModal.driver.attributes?.phone && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px', border: '1px solid #1F2937' }}>
@@ -888,11 +625,8 @@ export default function LiveDashboard({ devices, positions }) {
                 {(() => {
                   let licArray = [];
                   try {
-                    licArray = typeof driverViewModal.driver.attributes?.licenses === 'string' 
-                      ? JSON.parse(driverViewModal.driver.attributes.licenses) 
-                      : (driverViewModal.driver.attributes?.licenses || []);
+                    licArray = typeof driverViewModal.driver.attributes?.licenses === 'string' ? JSON.parse(driverViewModal.driver.attributes.licenses) : (driverViewModal.driver.attributes?.licenses || []);
                   } catch(e) {}
-                  
                   if (licArray.length > 0) {
                     return (
                       <div style={{ backgroundColor: 'rgba(37, 99, 235, 0.05)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(37, 99, 235, 0.2)' }}>
@@ -920,7 +654,6 @@ export default function LiveDashboard({ devices, positions }) {
                   </div>
                 )}
               </div>
-
             </div>
           </div>
         </div>

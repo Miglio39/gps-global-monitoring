@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 export default function DeviceManagement({ token, devices }) {
-  const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
+  const [deviceForm, setDeviceForm] = useState({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '', fechaVencimiento: '' });
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [adminMessage, setAdminMessage] = useState({ text: '', type: '' });
   
@@ -14,7 +14,7 @@ export default function DeviceManagement({ token, devices }) {
   const [deviceUserMap, setDeviceUserMap] = useState({});
   const [sortOrder, setSortOrder] = useState('default'); // 'default', 'asc', 'desc'
 
-  // NUEVO: Estado para controlar qué celda se está editando "en línea"
+  // Estado para controlar qué celda se está editando "en línea"
   const [inlineAssignDeviceId, setInlineAssignDeviceId] = useState(null);
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
@@ -57,16 +57,29 @@ export default function DeviceManagement({ token, devices }) {
   const handleSaveDevice = async (e) => {
     e.preventDefault();
     
-    // Inyectamos la fecha actual. Si es nuevo, toma hoy. Si estamos editando, conserva la que ya tenía.
-    const fechaActual = new Date().toISOString();
+    const fechaActualObj = new Date();
+    const fechaActualISO = fechaActualObj.toISOString();
+
+    // === LÓGICA DE VENCIMIENTO HÍBRIDA ===
+    let expirationTimeISO;
+    if (deviceForm.fechaVencimiento) {
+        // Si el admin seleccionó una fecha manual, la usamos y forzamos que el corte sea a las 23:59
+        expirationTimeISO = new Date(`${deviceForm.fechaVencimiento}T23:59:59`).toISOString();
+    } else {
+        // Si lo dejó en blanco, calculamos exactamente 1 año en el futuro
+        const fechaVencimientoObj = new Date(fechaActualObj);
+        fechaVencimientoObj.setFullYear(fechaVencimientoObj.getFullYear() + 1);
+        expirationTimeISO = fechaVencimientoObj.toISOString();
+    }
 
     const payload = {
         name: deviceForm.placa,
         uniqueId: deviceForm.imei,
         phone: deviceForm.sim,
+        expirationTime: expirationTimeISO, // Inyectamos la fecha a Traccar
         attributes: { 
           puerto: parseInt(deviceForm.puerto),
-          fechaRegistro: deviceForm.fechaRegistro || fechaActual
+          fechaRegistro: deviceForm.fechaRegistro || fechaActualISO
         } 
     };
 
@@ -79,7 +92,7 @@ export default function DeviceManagement({ token, devices }) {
         });
         if (res.ok) { 
             setAdminMessage({ text: 'GPS Actualizado exitosamente.', type: 'success' });
-            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' }); 
+            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '', fechaVencimiento: '' }); 
             setEditingDeviceId(null);
         }
     } else {
@@ -90,7 +103,7 @@ export default function DeviceManagement({ token, devices }) {
         });
         
         if (res.ok) { 
-            const newDevice = await res.json(); // Obtenemos el objeto del GPS recién creado con su ID
+            const newDevice = await res.json(); 
             
             // Asignación inmediata al usuario seleccionado
             if (selectedUserToAssign) {
@@ -100,7 +113,6 @@ export default function DeviceManagement({ token, devices }) {
                   headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
                   body: JSON.stringify({ userId: parseInt(selectedUserToAssign), deviceId: newDevice.id })
                 });
-                // Actualizamos el mapa de clientes visualmente tras asignar
                 fetchUsersAndMapping();
               } catch (permErr) {
                 console.error("Error asignando el GPS al usuario:", permErr);
@@ -108,8 +120,8 @@ export default function DeviceManagement({ token, devices }) {
             }
 
             setAdminMessage({ text: 'GPS registrado y asignado exitosamente.', type: 'success' });
-            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
-            setSelectedUserToAssign(''); // Limpiar el selector de usuarios
+            setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '', fechaVencimiento: '' });
+            setSelectedUserToAssign(''); 
         } else {
             setAdminMessage({ text: 'Error: El IMEI ya está registrado o hay un error en los datos.', type: 'error' });
         }
@@ -117,12 +129,19 @@ export default function DeviceManagement({ token, devices }) {
   };
 
   const handleEditClick = (device) => {
+      // Extraemos solo YYYY-MM-DD para que el input del calendario lo pueda leer
+      let expDateFormatted = '';
+      if (device.expirationTime) {
+          expDateFormatted = device.expirationTime.split('T')[0];
+      }
+
       setDeviceForm({ 
           placa: device.name, 
           imei: device.uniqueId,
           sim: device.phone || '',
           puerto: device.attributes?.puerto || '',
-          fechaRegistro: device.attributes?.fechaRegistro || ''
+          fechaRegistro: device.attributes?.fechaRegistro || '',
+          fechaVencimiento: expDateFormatted 
       });
       setEditingDeviceId(device.id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -134,13 +153,12 @@ export default function DeviceManagement({ token, devices }) {
       if (res.ok) { 
           setAdminMessage({ text: 'GPS eliminado correctamente.', type: 'success' });
           if (editingDeviceId === id) {
-              setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' });
+              setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '', fechaVencimiento: '' });
               setEditingDeviceId(null);
           }
       }
   };
 
-  // NUEVO: Función para asignar cliente directamente desde la celda de la tabla
   const handleInlineAssign = async (deviceId, userId) => {
     if (!userId) {
       setInlineAssignDeviceId(null);
@@ -153,17 +171,16 @@ export default function DeviceManagement({ token, devices }) {
         body: JSON.stringify({ userId: parseInt(userId), deviceId: deviceId })
       });
       if (res.ok) {
-        fetchUsersAndMapping(); // Refresca la tabla automáticamente
+        fetchUsersAndMapping(); 
       } else {
         alert("Error al asignar el cliente en línea.");
       }
     } catch (err) {
       console.error("Error al asignar cliente:", err);
     }
-    setInlineAssignDeviceId(null); // Cierra el modo edición
+    setInlineAssignDeviceId(null); 
   };
 
-  // Alternar el ordenamiento de fechas
   const handleSortToggle = () => {
     if (sortOrder === 'default') setSortOrder('asc');
     else if (sortOrder === 'asc') setSortOrder('desc');
@@ -188,13 +205,13 @@ export default function DeviceManagement({ token, devices }) {
     sortedDevices.sort((a, b) => {
       const dateA = a.lastUpdate ? new Date(a.lastUpdate).getTime() : 0;
       const dateB = b.lastUpdate ? new Date(b.lastUpdate).getTime() : 0;
-      if (sortOrder === 'asc') return dateA - dateB; // Menor a mayor (Nunca/Antiguos primero)
-      if (sortOrder === 'desc') return dateB - dateA; // Mayor a menor (Recientes primero)
+      if (sortOrder === 'asc') return dateA - dateB; 
+      if (sortOrder === 'desc') return dateB - dateA; 
       return 0;
     });
   }
 
-  // EXPORTADOR PROFESIONAL A EXCEL
+  // EXPORTADOR A EXCEL CON VENCIMIENTO
   const handleDownloadExcel = () => {
     if (sortedDevices.length === 0) {
       return alert("No hay dispositivos en la lista para exportar.");
@@ -211,9 +228,9 @@ export default function DeviceManagement({ token, devices }) {
       </style></head>
       <body>
       <table>
-        <tr><td colspan="7" class="meta-title"><b>INVENTARIO GENERAL DE HARDWARE Y LÍNEAS SIM</b></td></tr>
-        <tr><td colspan="7" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
-        <tr><td colspan="7" style="color: #6B7280;">Total Registros Exportados: ${sortedDevices.length}</td></tr>
+        <tr><td colspan="8" class="meta-title"><b>INVENTARIO GENERAL DE HARDWARE Y LÍNEAS SIM</b></td></tr>
+        <tr><td colspan="8" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
+        <tr><td colspan="8" style="color: #6B7280;">Total Registros Exportados: ${sortedDevices.length}</td></tr>
         <tr></tr>
         <tr>
           <th><b>PLACA / VEHÍCULO</b></th>
@@ -222,6 +239,7 @@ export default function DeviceManagement({ token, devices }) {
           <th><b>NÚMERO SIM</b></th>
           <th><b>MARCA / PUERTO</b></th>
           <th><b>FECHA DE REGISTRO</b></th>
+          <th><b>VENCIMIENTO</b></th>
           <th><b>ÚLTIMA CONEXIÓN</b></th>
         </tr>
     `;
@@ -230,7 +248,6 @@ export default function DeviceManagement({ token, devices }) {
       const p = d.attributes?.puerto;
       let marcaTexto = p ? `${p}` : 'N/A';
       
-      // Traducción organizada para Excel
       if (p === 5001) marcaTexto = 'Coban (5001)';
       if (p === 5004) marcaTexto = 'Queclink (5004)';
       if (p === 5011) marcaTexto = 'Suntech (5011)';
@@ -245,16 +262,20 @@ export default function DeviceManagement({ token, devices }) {
 
       const cliente = deviceUserMap[d.id] || 'Sin asignar';
       const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
+      
+      // Fecha de Vencimiento para Excel
+      const fechaVenc = d.expirationTime ? new Date(d.expirationTime).toLocaleDateString() : 'Ilimitado';
       const ultimaConexion = d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca';
 
       htmlTemplate += `
         <tr>
           <td>${d.name}</td>
           <td>${cliente}</td>
-          <td style="mso-number-format:'\@';">${d.uniqueId}</td> <!-- mso-number evita que Excel convierta el IMEI en notación científica -->
-          <td style="mso-number-format:'\@';">${d.phone || 'N/A'}</td>
+          <td style="mso-number-format:'\\@';">${d.uniqueId}</td>
+          <td style="mso-number-format:'\\@';">${d.phone || 'N/A'}</td>
           <td>${marcaTexto}</td>
           <td>${fechaReg}</td>
+          <td>${fechaVenc}</td>
           <td>${ultimaConexion}</td>
         </tr>
       `;
@@ -301,6 +322,19 @@ export default function DeviceManagement({ token, devices }) {
             <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={styles.input} className="dev-form-input" />
             <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={styles.input} className="dev-form-input" />
             
+            {/* INPUT DE FECHA CON PLACEHOLDER DINÁMICO */}
+<input 
+    type={deviceForm.fechaVencimiento ? 'date' : 'text'}
+    placeholder="Fecha de Vencimiento"
+    onFocus={(e) => e.target.type = 'date'}
+    onBlur={(e) => { if (!e.target.value) e.target.type = 'text' }}
+    title="Vencimiento manual (Opcional). Si lo dejas vacío, asume 1 año desde hoy."
+    value={deviceForm.fechaVencimiento} 
+    onChange={e => setDeviceForm({...deviceForm, fechaVencimiento: e.target.value})} 
+    style={{...styles.input, color: deviceForm.fechaVencimiento ? 'white' : '#9CA3AF'}} 
+    className="dev-form-input" 
+/>
+            
             <select 
                 required 
                 value={deviceForm.puerto} 
@@ -345,7 +379,7 @@ export default function DeviceManagement({ token, devices }) {
                   {editingDeviceId ? 'Guardar Cambios' : 'Registrar Equipo'}
               </button>
               {editingDeviceId && (
-                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '' })}} style={{...styles.btn, backgroundColor:'#374151', flex: 1, maxWidth: '150px'}}>Cancelar</button>
+                  <button type="button" onClick={() => {setEditingDeviceId(null); setDeviceForm({ placa: '', imei: '', sim: '', puerto: '', fechaRegistro: '', fechaVencimiento: '' })}} style={{...styles.btn, backgroundColor:'#374151', flex: 1, maxWidth: '150px'}}>Cancelar</button>
               )}
           </div>
         </form>
@@ -354,7 +388,6 @@ export default function DeviceManagement({ token, devices }) {
       {/* TABLA DE DISPOSITIVOS */}
       <div style={{...styles.adminCard, marginTop: '20px'}} className="dev-card-container">
         
-        {/* Contenedor del Buscador y Exportación */}
         <div className="search-container">
           <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
             Hardware Registrado ({sortedDevices.length})
@@ -388,6 +421,8 @@ export default function DeviceManagement({ token, devices }) {
                         <th style={styles.th}>Número SIM</th>
                         <th style={styles.th}>Puerto / Marca</th>
                         <th style={styles.th}>Fecha Registro</th>
+                        {/* COLUMNA NUEVA EN LA TABLA */}
+                        <th style={styles.th}>Vencimiento</th> 
                         <th 
                           onClick={handleSortToggle} 
                           style={{...styles.th, cursor: 'pointer', userSelect: 'none', color: sortOrder !== 'default' ? '#60A5FA' : '#9CA3AF'}}
@@ -400,7 +435,7 @@ export default function DeviceManagement({ token, devices }) {
                 </thead>
                 <tbody>
                     {sortedDevices.length === 0 ? (
-                      <tr><td colSpan="8" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
+                      <tr><td colSpan="9" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
                     ) : (
                       sortedDevices.map(d => {
                           const p = d.attributes?.puerto;
@@ -419,21 +454,19 @@ export default function DeviceManagement({ token, devices }) {
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
                           const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
+                          
+                          // LÓGICA DE COLOR PARA VENCIMIENTOS
+                          const isExpired = d.expirationTime && new Date(d.expirationTime) < new Date();
+                          const fechaVenc = d.expirationTime ? new Date(d.expirationTime).toLocaleDateString() : 'Ilimitado';
 
                           return (
                               <tr key={d.id} style={styles.tr}>
                                   <td style={styles.td}><strong>{d.name}</strong></td>
                                   
-                                  {/* AJUSTE MAESTRO: Asignación Rápida "En Línea" */}
                                   <td style={styles.td}>
                                     {deviceUserMap[d.id] ? (
-                                      <span 
-                                        title={deviceUserMap[d.id]} 
-                                        style={{color: '#34D399', fontWeight: 'bold'}}
-                                      >
-                                        {deviceUserMap[d.id].length > 12 
-                                          ? deviceUserMap[d.id].substring(0, 12) + '...' 
-                                          : deviceUserMap[d.id]}
+                                      <span title={deviceUserMap[d.id]} style={{color: '#34D399', fontWeight: 'bold'}}>
+                                        {deviceUserMap[d.id].length > 12 ? deviceUserMap[d.id].substring(0, 12) + '...' : deviceUserMap[d.id]}
                                       </span>
                                     ) : inlineAssignDeviceId === d.id ? (
                                       <select 
@@ -448,11 +481,7 @@ export default function DeviceManagement({ token, devices }) {
                                         ))}
                                       </select>
                                     ) : (
-                                      <span 
-                                        onClick={() => setInlineAssignDeviceId(d.id)}
-                                        style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic', cursor: 'pointer', borderBottom: '1px dashed #6B7280'}}
-                                        title="Clic para asignar cliente a este GPS"
-                                      >
+                                      <span onClick={() => setInlineAssignDeviceId(d.id)} style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic', cursor: 'pointer', borderBottom: '1px dashed #6B7280'}} title="Clic para asignar cliente a este GPS">
                                         Sin asignar ✏️
                                       </span>
                                     )}
@@ -462,6 +491,12 @@ export default function DeviceManagement({ token, devices }) {
                                   <td style={styles.td}>{d.phone || 'N/A'}</td>
                                   <td style={styles.td}>{marcaTexto}</td>
                                   <td style={{...styles.td, color: '#60A5FA', fontSize: '12px'}}>{fechaReg}</td>
+                                  
+                                  {/* RESULTADO VISUAL DEL VENCIMIENTO */}
+                                  <td style={{...styles.td, color: isExpired ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>
+                                    {isExpired ? '⚠️ ' : ''}{fechaVenc}
+                                  </td>
+                                  
                                   <td style={styles.td}>{d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca'}</td>
                                   <td style={styles.td}>
                                       <button onClick={() => handleEditClick(d)} style={styles.actionBtnEdit}>✏️</button>
