@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
@@ -50,9 +50,15 @@ export default function LiveDashboard({ devices, positions }) {
   const [iconEditModal, setIconEditModal] = useState({ isOpen: false, device: null });
   const [localCategories, setLocalCategories] = useState({}); 
 
-  // === ESTADOS RECUPERADOS PARA CONDUCTORES ===
+  // === ESTADOS PARA CONDUCTORES ===
   const [drivers, setDrivers] = useState([]);
   const [driverViewModal, setDriverViewModal] = useState({ isOpen: false, driver: null });
+
+  // === ESTADOS PARA EL CENTRO DE NOTIFICACIONES ===
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [speedLimit, setSpeedLimit] = useState(80); // Límite de velocidad modificable
+  const prevPositionsRef = useRef({});
 
   // === CONFIGURACIÓN DE MAPAS ===
   const [mapStyle, setMapStyle] = useState('streets'); 
@@ -68,16 +74,14 @@ export default function LiveDashboard({ devices, positions }) {
   const token = localStorage.getItem('traccar_token');
   const getDevicePosition = (deviceId) => positions[deviceId];
 
-  // === NÚCLEO: LÓGICA DE SUSPENSIÓN HÍBRIDA ===
+  // Lógica de Suspensión
   const checkIsSuspended = (device) => {
     if (device.disabled) return true; 
-    if (device.expirationTime && new Date(device.expirationTime) < new Date()) {
-      return true; 
-    }
+    if (device.expirationTime && new Date(device.expirationTime) < new Date()) return true; 
     return false;
   };
 
-  // === LÓGICA RECUPERADA: CARGAR CONDUCTORES EN SEGUNDO PLANO ===
+  // Cargar Conductores
   useEffect(() => {
     const fetchDrivers = async () => {
       if (!token) return;
@@ -85,21 +89,14 @@ export default function LiveDashboard({ devices, positions }) {
         const response = await fetch(`${API_BASE}/api/drivers`, {
           headers: { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' }
         });
-        if (response.ok) {
-          setDrivers(await response.json());
-        }
-      } catch (error) {
-        console.error("Error cargando conductores:", error);
-      }
+        if (response.ok) setDrivers(await response.json());
+      } catch (error) { console.error("Error cargando conductores:", error); }
     };
-    
     fetchDrivers();
-    // Refresco cada 10 seg por si se asigna un conductor nuevo
     const interval = setInterval(fetchDrivers, 10000); 
     return () => clearInterval(interval);
   }, [token]);
 
-  // Diccionario ultra rápido para buscar conductores por ID
   const driverMap = {};
   drivers.forEach(d => { driverMap[d.id] = d; });
 
@@ -121,14 +118,65 @@ export default function LiveDashboard({ devices, positions }) {
     if (!hasInitialCentered && validPositions.length > 0 && map) {
       const sumLat = validPositions.reduce((sum, p) => sum + p.latitude, 0);
       const sumLng = validPositions.reduce((sum, p) => sum + p.longitude, 0);
-      const avgLat = sumLat / validPositions.length;
-      const avgLng = sumLng / validPositions.length;
-      map.setView([avgLat, avgLng], 12);
+      map.setView([sumLat / validPositions.length, sumLng / validPositions.length], 12);
       setHasCentered(true);
     }
   }, [positions, hasInitialCentered, map]);
 
-  // KPIs con validación de suspensión
+  // === 🚀 MOTOR DE NOTIFICACIONES CON SONIDO ===
+  useEffect(() => {
+    const newNotifs = [];
+    const now = new Date();
+
+    devices.forEach(device => {
+      const pos = positions[device.id];
+      const prevPos = prevPositionsRef.current[device.id];
+
+      if (pos && prevPos && !checkIsSuspended(device)) {
+        const speedKmh = pos.speed * 1.852;
+        const prevSpeedKmh = prevPos.speed * 1.852;
+
+        const isMoving = pos.speed > 0;
+        const prevMoving = prevPos.speed > 0;
+
+        const rawIgnition = pos.attributes?.ignition;
+        const prevRawIgnition = prevPos.attributes?.ignition;
+
+        const finalIgnition = isMoving ? true : (rawIgnition !== undefined ? rawIgnition : false);
+        const prevFinalIgnition = prevMoving ? true : (prevRawIgnition !== undefined ? prevRawIgnition : false);
+
+        // Alerta: Motor se ENCENDIÓ
+        if (!prevFinalIgnition && finalIgnition) {
+          newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'IGNITION_ON', time: now, read: false });
+        }
+        // Alerta: Motor se APAGÓ
+        else if (prevFinalIgnition && !finalIgnition) {
+          newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'IGNITION_OFF', time: now, read: false });
+        }
+
+        // Alerta: Exceso de velocidad (Usando el Límite Configurable)
+        if (speedKmh > speedLimit && prevSpeedKmh <= speedLimit) {
+          newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'OVERSPEED', speed: speedKmh, time: now, read: false });
+        }
+      }
+
+      if (pos) prevPositionsRef.current[device.id] = pos;
+    });
+
+    if (newNotifs.length > 0) {
+      setNotifications(prev => [...newNotifs, ...prev].slice(0, 50));
+      
+      // 🔊 REPRODUCIR SONIDO DE ALARMA
+      try {
+        const audio = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
+        audio.volume = 0.4; // Ajustamos al 40% para que no aturda
+        audio.play().catch(err => console.warn("El navegador bloqueó el sonido. Haz clic en el mapa una vez para habilitarlo."));
+      } catch (err) {
+        console.error("Error al intentar reproducir la alarma", err);
+      }
+    }
+  }, [positions, devices, speedLimit]);
+
   const totalCount = devices.length;
   const onlineCount = devices.filter(d => d.status === 'online' && !checkIsSuspended(d)).length;
   const unknownCount = devices.filter(d => !d.lastUpdate && !checkIsSuspended(d)).length; 
@@ -140,28 +188,18 @@ export default function LiveDashboard({ devices, positions }) {
     const actionText = stopEngine ? 'APAGAR EL MOTOR' : 'HABILITAR EL ENCENDIDO';
     const commandData = stopEngine ? 'RELAY,1#' : 'RELAY,0#';
 
-    if (!window.confirm(`⚠️ CONFIRMACIÓN DE SEGURIDAD\n\n¿Estás seguro de que deseas ${actionText} de "${deviceName}"?`)) {
-      return;
-    }
+    if (!window.confirm(`⚠️ CONFIRMACIÓN DE SEGURIDAD\n\n¿Estás seguro de que deseas ${actionText} de "${deviceName}"?`)) return;
 
     try {
       const response = await fetch(`${API_BASE}/api/commands/send`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: 0, deviceId: deviceId, type: 'custom', attributes: { data: commandData } })
       });
 
-      if (response.ok) {
-        alert(`✅ Comando enviado a "${deviceName}".`);
-      } else {
-        const errorText = await response.text();
-        alert(`❌ Error en Servidor Traccar (${response.status}): ${errorText}`);
-      }
+      if (response.ok) alert(`✅ Comando enviado a "${deviceName}".`);
+      else alert(`❌ Error en Servidor Traccar (${response.status}): ${await response.text()}`);
     } catch (error) {
-      console.error(error);
       alert("❌ Error de red: No se pudo conectar con el servidor.");
     }
   };
@@ -212,12 +250,7 @@ export default function LiveDashboard({ devices, positions }) {
     
     const html = `
       <div style="display: flex; flex-direction: column; align-items: center; transform: translateY(-50%); opacity: ${isSuspended ? '0.6' : '1'};">
-        <img 
-          src="${spriteUrl}" 
-          onerror="this.onerror=null;this.src='https://img.icons8.com/fluency/96/car.png';"
-          style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5)) ${isSuspended ? 'grayscale(100%)' : ''};" 
-          alt="sprite" 
-        />
+        <img src="${spriteUrl}" onerror="this.onerror=null;this.src='https://img.icons8.com/fluency/96/car.png';" style="width: 25px; height: 25px; object-fit: contain; filter: drop-shadow(0px 6px 4px rgba(0,0,0,0.5)) ${isSuspended ? 'grayscale(100%)' : ''};" alt="sprite" />
         <div style="background: rgba(15, 23, 42, 0.9); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: 'Inter', Arial, sans-serif; font-weight: 700; color: #F3F4F6; white-space: nowrap; border: 1px solid rgba(255,255,255,0.1); border-bottom: 3px solid ${statusColor}; box-shadow: 0 4px 6px rgba(0,0,0,0.4); margin-top: -4px;">
           ${isSuspended ? '🚫 ' : ''}${device.name}
         </div>
@@ -242,7 +275,6 @@ export default function LiveDashboard({ devices, positions }) {
     const isUnknown = !device.lastUpdate;
     const isOnline = device.status === 'online';
     const isOffline = device.status !== 'online' && !isUnknown; 
-    
     const isSuspended = checkIsSuspended(device);
 
     let matchesStatus = true;
@@ -252,9 +284,7 @@ export default function LiveDashboard({ devices, positions }) {
     if (filter === 'offline') matchesStatus = isOffline && !isSuspended;
     if (filter === 'unknown') matchesStatus = isUnknown && !isSuspended; 
 
-    const matchesSearch = device.name.toLowerCase().includes(searchTerm.toLowerCase());
-
-    return matchesStatus && matchesSearch; 
+    return matchesStatus && device.name.toLowerCase().includes(searchTerm.toLowerCase()); 
   });
 
   const handleDeviceClick = (device, pos) => {
@@ -265,37 +295,131 @@ export default function LiveDashboard({ devices, positions }) {
 
   const openStreetView = (lat, lng) => {
     if (!lat || !lng) return;
-    const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
-    window.open(url, '_blank');
+    window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`, '_blank');
   };
 
+  const unreadCount = notifications.filter(n => !n.read).length;
+
   return (
-    <main style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+    <main style={{ position: 'relative', flex: 1, overflow: 'hidden' }} onClick={() => { setShowNotifications(false); setShowLayerMenu(false); }}>
       
       <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 0 }}>
-        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto' }}>
-          <div 
-            onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); }}
-            title="Cambiar vista del mapa"
-            style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
-            </svg>
+        
+        {/* === BLOQUE DE CONTROLES IZQUIERDOS === */}
+        <div style={{ position: 'absolute', top: '80px', left: '10px', zIndex: 9999, pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          
+          {/* 1. SELECTOR DE CAPAS DE MAPA */}
+          <div style={{ position: 'relative' }}>
+            <div 
+              onClick={(e) => { e.stopPropagation(); setShowLayerMenu(!showLayerMenu); setShowNotifications(false); }}
+              title="Cambiar vista del mapa"
+              style={{ backgroundColor: '#111827', border: '2px solid rgba(0,0,0,0.2)', borderRadius: '4px', width: '34px', height: '34px', display: 'flex', justifyContent: 'center', alignItems: 'center', cursor: 'pointer', boxShadow: '0 1px 5px rgba(0,0,0,0.65)', color: mapStyle !== 'dark' ? '#60A5FA' : '#9CA3AF', transition: 'all 0.2s ease' }}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M11.99 2.5l-9.5 5.5 9.5 5.5 9.5-5.5-9.5-5.5zm0 13.5l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5zm0 5.25l-9.5-5.5-2 1.16 11.5 6.66 11.5-6.66-2-1.16-9.5 5.5z"/>
+              </svg>
+            </div>
+            {showLayerMenu && (
+              <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
+                {Object.keys(MAP_TILES).map((key) => (
+                  <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
+                    {MAP_TILES[key].name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {showLayerMenu && (
-            <div style={{ position: 'absolute', top: '0', left: '42px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: '2px', width: '140px' }}>
-              {Object.keys(MAP_TILES).map((key) => (
-                <button key={key} onClick={(e) => { e.stopPropagation(); setMapStyle(key); setShowLayerMenu(false); }} style={{ backgroundColor: mapStyle === key ? '#2563EB' : 'transparent', color: mapStyle === key ? 'white' : '#9CA3AF', border: 'none', borderRadius: '4px', padding: '8px 10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'left', cursor: 'pointer', transition: 'all 0.2s ease-in-out' }}>
-                  {MAP_TILES[key].name}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* 2. 🔔 CAMPANA DE NOTIFICACIONES */}
+          <div style={{ position: 'relative' }}>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowNotifications(!showNotifications);
+                setShowLayerMenu(false);
+                if (!showNotifications && unreadCount > 0) {
+                  setNotifications(prev => prev.map(n => ({...n, read: true})));
+                }
+              }}
+              title="Alertas en Vivo"
+              style={{
+                backgroundColor: 'rgba(15, 23, 42, 0.95)', border: '2px solid rgba(0,0,0,0.2)',
+                borderRadius: '4px', width: '34px', height: '34px', cursor: 'pointer', display: 'flex', 
+                justifyContent: 'center', alignItems: 'center', boxShadow: '0 1px 5px rgba(0,0,0,0.65)',
+                position: 'relative', transition: 'all 0.2s'
+              }}
+            >
+              <span style={{ fontSize: '16px' }}>🔔</span>
+              {unreadCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: '-6px', right: '-6px', backgroundColor: '#EF4444',
+                  color: 'white', fontSize: '10px', fontWeight: 'bold', width: '18px', height: '18px',
+                  borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.4)', animation: 'pulse 1.5s infinite'
+                }}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {showNotifications && (
+              <div onClick={e => e.stopPropagation()} style={{
+                position: 'absolute', top: '0', left: '42px', width: isMobile ? 'calc(100vw - 70px)' : '320px', 
+                maxHeight: '450px', backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '12px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.8)', overflowY: 'auto', display: 'flex', flexDirection: 'column'
+              }}>
+                <div style={{ padding: '12px 15px', borderBottom: '1px solid #1F2937', display: 'flex', flexDirection: 'column', gap: '10px', position: 'sticky', top: 0, backgroundColor: '#111827', zIndex: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h4 style={{ margin: 0, color: 'white', fontSize: '14px' }}>Centro de Alertas</h4>
+                    {notifications.length > 0 && (
+                      <button onClick={() => setNotifications([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>
+                        Limpiar todo
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* CONTROL DE VELOCIDAD */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: 'bold' }}>Límite Exceso (km/h):</span>
+                    <input 
+                      type="number" 
+                      value={speedLimit} 
+                      onChange={(e) => setSpeedLimit(Number(e.target.value) || 0)}
+                      style={{ width: '60px', backgroundColor: '#1F2937', border: '1px solid #4B5563', color: '#EF4444', borderRadius: '4px', padding: '4px', textAlign: 'center', fontWeight: 'bold', fontSize: '12px', outline: 'none' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {notifications.length === 0 ? (
+                    <p style={{ margin: 0, color: '#6B7280', fontSize: '12px', textAlign: 'center', padding: '30px 0' }}>No hay alertas recientes.</p>
+                  ) : (
+                    notifications.map(n => (
+                      <div key={n.id} style={{ display: 'flex', gap: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px', borderLeft: n.type === 'OVERSPEED' ? '3px solid #EF4444' : (n.type === 'IGNITION_ON' ? '3px solid #10B981' : '3px solid #6B7280') }}>
+                        <div style={{ fontSize: '18px', display: 'flex', alignItems: 'center' }}>
+                          {n.type === 'OVERSPEED' ? '🚨' : (n.type === 'IGNITION_ON' ? '🟢' : '🔴')}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                          <span style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>{n.deviceName}</span>
+                          <span style={{ color: '#9CA3AF', fontSize: '11px', marginTop: '2px' }}>
+                            {n.type === 'OVERSPEED' && `⚠️ Exceso de velocidad: ${n.speed.toFixed(1)} km/h`}
+                            {n.type === 'IGNITION_ON' && '🔑 Motor Encendido'}
+                            {n.type === 'IGNITION_OFF' && '🔑 Motor Apagado'}
+                          </span>
+                          <span style={{ color: '#6B7280', fontSize: '10px', marginTop: '6px', alignSelf: 'flex-end' }}>
+                            {n.time.toLocaleTimeString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap} onClick={() => setShowLayerMenu(false)}>
+        <MapContainer center={[4.142, -73.626]} zoom={13} style={{ height: '100%', width: '100%' }} ref={setMap}>
           <TileLayer url={MAP_TILES[mapStyle].url} attribution={MAP_TILES[mapStyle].attribution} />          
           
           <MarkerClusterGroup chunkedLoading maxClusterRadius={80} iconCreateFunction={createClusterCustomIcon}>
@@ -319,7 +443,7 @@ export default function LiveDashboard({ devices, positions }) {
               
               const ultimaConexion = device.lastUpdate ? new Date(device.lastUpdate).toLocaleString('es-CO') : 'Desconocida';
 
-              // === MAGIA CONDUCTORES: BUSCAMOS SI ESTE VEHÍCULO TIENE CONDUCTOR ===
+              // === CONDUCTOR PARA GLOBO ===
               const assignedDriver = device.attributes?.driverId ? driverMap[device.attributes.driverId] : null;
 
               return (
@@ -334,18 +458,13 @@ export default function LiveDashboard({ devices, positions }) {
                       {device.name}
                     </b><br/>
 
-                    {/* MOSTRAMOS EL CONDUCTOR EN EL GLOBO SI EXISTE Y NO ESTÁ SUSPENDIDO */}
                     {assignedDriver && !isSuspended && (
-                      <span style={{color:'#3B82F6', fontSize:'11px', fontWeight: 'bold'}}>
-                        👨‍✈️ Conductor: {assignedDriver.name}
-                      </span>
+                      <span style={{color:'#3B82F6', fontSize:'11px', fontWeight: 'bold'}}>👨‍✈️ Conductor: {assignedDriver.name}</span>
                     )}
                     {assignedDriver && !isSuspended && <br/>}
 
                     <span style={{color:'#666', fontSize:'12px'}}>Velocidad: {(pos.speed * 1.852).toFixed(1)} km/h</span><br/>
-                    <span style={{color: isSuspended ? '#EF4444' : '#666', fontSize:'11px', fontWeight: isSuspended ? 'bold' : 'normal'}}>
-                      Estado: {estadoStr}
-                    </span><br/>
+                    <span style={{color: isSuspended ? '#EF4444' : '#666', fontSize:'11px', fontWeight: isSuspended ? 'bold' : 'normal'}}>Estado: {estadoStr}</span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Últ. conexión: {ultimaConexion}</span><br/>
                     {hasIgnition && !isSuspended && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
                     {batteryInfo.text && !isSuspended && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
@@ -445,7 +564,6 @@ export default function LiveDashboard({ devices, positions }) {
               const hasIgnition = (rawIgnition !== undefined && rawIgnition !== null) || isMoving;
               const finalIgnition = isMoving ? true : rawIgnition;
 
-              // === CONDUCTOR PARA LA LISTA LATERAL ===
               const assignedDriver = device.attributes?.driverId ? driverMap[device.attributes.driverId] : null;
 
               return (
@@ -566,14 +684,11 @@ export default function LiveDashboard({ devices, positions }) {
       {driverViewModal.isOpen && driverViewModal.driver && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 99999, display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(5px)' }} onClick={() => setDriverViewModal({ isOpen: false, driver: null })}>
           <div style={{ backgroundColor: '#111827', borderRadius: '16px', width: '90%', maxWidth: '350px', border: '1px solid #374151', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', overflow: 'hidden', position: 'relative' }} onClick={e => e.stopPropagation()}>
-            {/* Cabecera Azul */}
             <div style={{ backgroundColor: '#2563EB', height: '80px', width: '100%', position: 'absolute', top: 0, zIndex: 0 }}></div>
             
             <button onClick={() => setDriverViewModal({ isOpen: false, driver: null })} style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', zIndex: 10, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>✕</button>
 
             <div style={{ padding: '25px 20px 20px 20px', position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              
-              {/* Foto de Perfil */}
               <div style={{ width: '110px', height: '110px', borderRadius: '50%', border: '4px solid #111827', backgroundColor: '#374151', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.3)', marginBottom: '15px', marginTop: '10px' }}>
                 {driverViewModal.driver.attributes?.photo ? (
                   <img src={driverViewModal.driver.attributes.photo} alt={driverViewModal.driver.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -588,7 +703,6 @@ export default function LiveDashboard({ devices, positions }) {
               </p>
 
               <div style={{ width: '100%', marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {/* Teléfono */}
                 {driverViewModal.driver.attributes?.phone && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px', border: '1px solid #1F2937' }}>
                     <span style={{ fontSize: '18px' }}>📞</span>
@@ -599,7 +713,6 @@ export default function LiveDashboard({ devices, positions }) {
                   </div>
                 )}
 
-                {/* Salud (Sangre y EPS) */}
                 <div style={{ display: 'flex', gap: '10px' }}>
                   {driverViewModal.driver.attributes?.bloodType && (
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px', border: '1px solid #1F2937' }}>
@@ -621,7 +734,6 @@ export default function LiveDashboard({ devices, positions }) {
                   )}
                 </div>
 
-                {/* Licencias */}
                 {(() => {
                   let licArray = [];
                   try {
@@ -644,7 +756,6 @@ export default function LiveDashboard({ devices, positions }) {
                   return null;
                 })()}
 
-                {/* Restricciones */}
                 {driverViewModal.driver.attributes?.restrictions && (
                   <div style={{ backgroundColor: 'rgba(248, 113, 113, 0.05)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(248, 113, 113, 0.2)' }}>
                     <div style={{ fontSize: '10px', color: '#F87171', textTransform: 'uppercase', marginBottom: '4px', fontWeight: 'bold' }}>⚠️ Restricciones Médicas</div>

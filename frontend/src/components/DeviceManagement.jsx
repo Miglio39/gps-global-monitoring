@@ -19,7 +19,6 @@ export default function DeviceManagement({ token, devices }) {
 
   const BASE_URL = 'https://api.globalmonitorgps.com';
 
-  // Función combinada para traer usuarios y mapear qué dispositivo tiene cada cliente
   const fetchUsersAndMapping = async () => {
     try {
       const res = await fetch(`${BASE_URL}/api/users`, {
@@ -29,7 +28,6 @@ export default function DeviceManagement({ token, devices }) {
         const usersData = await res.json();
         setUsers(usersData);
 
-        // Mapear dispositivos por cliente (Omitiendo a los administradores para no saturar)
         const mapping = {};
         const fetchPromises = usersData.filter(u => !u.administrator).map(async (user) => {
           const devRes = await fetch(`${BASE_URL}/api/devices?userId=${user.id}`, {
@@ -60,13 +58,10 @@ export default function DeviceManagement({ token, devices }) {
     const fechaActualObj = new Date();
     const fechaActualISO = fechaActualObj.toISOString();
 
-    // === LÓGICA DE VENCIMIENTO HÍBRIDA ===
     let expirationTimeISO;
     if (deviceForm.fechaVencimiento) {
-        // Si el admin seleccionó una fecha manual, la usamos y forzamos que el corte sea a las 23:59
         expirationTimeISO = new Date(`${deviceForm.fechaVencimiento}T23:59:59`).toISOString();
     } else {
-        // Si lo dejó en blanco, calculamos exactamente 1 año en el futuro
         const fechaVencimientoObj = new Date(fechaActualObj);
         fechaVencimientoObj.setFullYear(fechaVencimientoObj.getFullYear() + 1);
         expirationTimeISO = fechaVencimientoObj.toISOString();
@@ -76,7 +71,7 @@ export default function DeviceManagement({ token, devices }) {
         name: deviceForm.placa,
         uniqueId: deviceForm.imei,
         phone: deviceForm.sim,
-        expirationTime: expirationTimeISO, // Inyectamos la fecha a Traccar
+        expirationTime: expirationTimeISO,
         attributes: { 
           puerto: parseInt(deviceForm.puerto),
           fechaRegistro: deviceForm.fechaRegistro || fechaActualISO
@@ -105,7 +100,6 @@ export default function DeviceManagement({ token, devices }) {
         if (res.ok) { 
             const newDevice = await res.json(); 
             
-            // Asignación inmediata al usuario seleccionado
             if (selectedUserToAssign) {
               try {
                 await fetch(`${BASE_URL}/api/permissions`, {
@@ -129,7 +123,6 @@ export default function DeviceManagement({ token, devices }) {
   };
 
   const handleEditClick = (device) => {
-      // Extraemos solo YYYY-MM-DD para que el input del calendario lo pueda leer
       let expDateFormatted = '';
       if (device.expirationTime) {
           expDateFormatted = device.expirationTime.split('T')[0];
@@ -187,7 +180,103 @@ export default function DeviceManagement({ token, devices }) {
     else setSortOrder('default');
   };
 
-  // Lógica de Filtrado (Buscador)
+  // === 🚀 NUEVO: MOTOR DE IMPORTACIÓN MASIVA DESDE CSV ===
+  const handleImportCSV = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setAdminMessage({ text: '⏳ Procesando archivo de Excel, conectando con Traccar...', type: 'success' });
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const text = evt.target.result;
+        // Separar filas manejando diferentes sistemas operativos (Windows/Mac)
+        const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
+        
+        if (rows.length < 2) {
+            setAdminMessage({ text: '❌ Archivo vacío o sin datos válidos.', type: 'error' });
+            return;
+        }
+
+        // Limpiar encabezados
+        const headers = rows[0].split(/[;,]/).map(h => h.trim().replace(/^"|"$/g, '').toUpperCase());
+        
+        const imeiIndex = headers.findIndex(h => h.includes('IMEI'));
+        const fechaIndex = headers.findIndex(h => h.includes('VENCIMIENTO') || h.includes('FECHA'));
+
+        if (imeiIndex === -1 || fechaIndex === -1) {
+          setAdminMessage({ text: '❌ Error: El archivo CSV debe contener obligatoriamente una columna "IMEI" y una columna "VENCIMIENTO".', type: 'error' });
+          return;
+        }
+
+        let successCount = 0;
+        let notFoundCount = 0;
+
+        // Iteramos sobre todos los vehículos del archivo
+        for (let i = 1; i < rows.length; i++) {
+          const columns = rows[i].split(/[;,]/).map(c => c.trim().replace(/^"|"$/g, ''));
+          const imei = columns[imeiIndex];
+          const fechaExcel = columns[fechaIndex];
+
+          if (!imei || !fechaExcel) continue;
+
+          // Buscamos si ese IMEI ya existe en nuestra plataforma
+          const targetDevice = devices.find(d => String(d.uniqueId) === String(imei));
+
+          if (targetDevice) {
+             let formattedDate = fechaExcel;
+             
+             // Si el cliente exporta DD/MM/YYYY, lo pasamos a YYYY-MM-DD
+             if (formattedDate.includes('/')) {
+                 const parts = formattedDate.split('/');
+                 if (parts[0].length <= 2 && parts[2].length === 4) {
+                     const day = parts[0].padStart(2, '0');
+                     const month = parts[1].padStart(2, '0');
+                     formattedDate = `${parts[2]}-${month}-${day}`;
+                 }
+             }
+
+             let expirationTimeISO;
+             try {
+                 // Forzamos el corte al final de ese día exacto (23:59:59)
+                 expirationTimeISO = new Date(`${formattedDate}T23:59:59`).toISOString();
+             } catch (dateErr) {
+                 continue; // Saltamos si la fecha está totalmente rota
+             }
+
+             const payload = {
+               ...targetDevice,
+               expirationTime: expirationTimeISO
+             };
+
+             // Inyectamos la actualización a Traccar de forma silenciosa
+             const res = await fetch(`${BASE_URL}/api/devices/${targetDevice.id}`, {
+               method: 'PUT',
+               headers: { 'Authorization': `Basic ${token}`, 'Content-Type': 'application/json' },
+               body: JSON.stringify(payload)
+             });
+
+             if (res.ok) successCount++;
+          } else {
+            notFoundCount++;
+          }
+        }
+
+        setAdminMessage({ text: `✅ ¡Importación Masiva Exitosa! Equipos actualizados: ${successCount}. (IMEIs no encontrados en sistema: ${notFoundCount})`, type: 'success' });
+        e.target.value = ''; // Limpiamos el input
+        
+        // Recargamos la vista para que las celdas cambien de color en la tabla
+        setTimeout(() => window.location.reload(), 3500);
+
+      } catch (err) {
+        console.error("Error procesando CSV:", err);
+        setAdminMessage({ text: '❌ Hubo un error crítico leyendo el archivo.', type: 'error' });
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
   const filteredDevices = devices.filter(d => {
     const term = searchTerm.toLowerCase();
     const clientName = deviceUserMap[d.id] ? deviceUserMap[d.id].toLowerCase() : '';
@@ -199,7 +288,6 @@ export default function DeviceManagement({ token, devices }) {
     );
   });
 
-  // Lógica de Ordenamiento
   let sortedDevices = [...filteredDevices];
   if (sortOrder !== 'default') {
     sortedDevices.sort((a, b) => {
@@ -211,7 +299,6 @@ export default function DeviceManagement({ token, devices }) {
     });
   }
 
-  // EXPORTADOR A EXCEL CON VENCIMIENTO
   const handleDownloadExcel = () => {
     if (sortedDevices.length === 0) {
       return alert("No hay dispositivos en la lista para exportar.");
@@ -262,8 +349,6 @@ export default function DeviceManagement({ token, devices }) {
 
       const cliente = deviceUserMap[d.id] || 'Sin asignar';
       const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
-      
-      // Fecha de Vencimiento para Excel
       const fechaVenc = d.expirationTime ? new Date(d.expirationTime).toLocaleDateString() : 'Ilimitado';
       const ultimaConexion = d.lastUpdate ? new Date(d.lastUpdate).toLocaleString() : 'Nunca';
 
@@ -304,6 +389,7 @@ export default function DeviceManagement({ token, devices }) {
           .dev-form-input { width: 100%; min-width: auto; }
           .dev-card-container { padding: 15px !important; }
           .search-input { width: 100% !important; max-width: none !important; }
+          .action-buttons-group { width: 100%; justify-content: space-between; }
         }
       `}</style>
 
@@ -313,7 +399,6 @@ export default function DeviceManagement({ token, devices }) {
           </div>
       )}
       
-      {/* FORMULARIO DE GPS */}
       <div style={{...styles.adminCard, border: editingDeviceId ? '1px solid #10B981' : '1px solid #1F2937'}} className="dev-card-container">
         <h3 style={styles.adminCardTitle}>{editingDeviceId ? 'Editar Dispositivo GPS ✏️' : 'Registro de Nuevo GPS'}</h3>
         <form onSubmit={handleSaveDevice} style={styles.form}>
@@ -322,18 +407,17 @@ export default function DeviceManagement({ token, devices }) {
             <input type="text" placeholder="IMEI" required value={deviceForm.imei} onChange={e => setDeviceForm({...deviceForm, imei: e.target.value})} style={styles.input} className="dev-form-input" />
             <input type="text" placeholder="Número SIM" value={deviceForm.sim} onChange={e => setDeviceForm({...deviceForm, sim: e.target.value})} style={styles.input} className="dev-form-input" />
             
-            {/* INPUT DE FECHA CON PLACEHOLDER DINÁMICO */}
-<input 
-    type={deviceForm.fechaVencimiento ? 'date' : 'text'}
-    placeholder="Fecha de Vencimiento"
-    onFocus={(e) => e.target.type = 'date'}
-    onBlur={(e) => { if (!e.target.value) e.target.type = 'text' }}
-    title="Vencimiento manual (Opcional). Si lo dejas vacío, asume 1 año desde hoy."
-    value={deviceForm.fechaVencimiento} 
-    onChange={e => setDeviceForm({...deviceForm, fechaVencimiento: e.target.value})} 
-    style={{...styles.input, color: deviceForm.fechaVencimiento ? 'white' : '#9CA3AF'}} 
-    className="dev-form-input" 
-/>
+            <input 
+                type={deviceForm.fechaVencimiento ? 'date' : 'text'}
+                placeholder="Fecha de Vencimiento"
+                onFocus={(e) => e.target.type = 'date'}
+                onBlur={(e) => { if (!e.target.value) e.target.type = 'text' }}
+                title="Vencimiento manual (Opcional). Si lo dejas vacío, asume 1 año desde hoy."
+                value={deviceForm.fechaVencimiento} 
+                onChange={e => setDeviceForm({...deviceForm, fechaVencimiento: e.target.value})} 
+                style={{...styles.input, color: deviceForm.fechaVencimiento ? 'white' : '#9CA3AF'}} 
+                className="dev-form-input" 
+            />
             
             <select 
                 required 
@@ -355,7 +439,6 @@ export default function DeviceManagement({ token, devices }) {
                 <option value="5159">Protrack V1 / Huabao (5159)</option>
             </select>
 
-            {/* SELECTOR DE USUARIO */}
             {!editingDeviceId && (
               <select 
                   value={selectedUserToAssign} 
@@ -392,19 +475,36 @@ export default function DeviceManagement({ token, devices }) {
           <h3 style={{...styles.adminCardTitle, borderBottom: 'none', margin: 0, padding: 0}}>
             Hardware Registrado ({sortedDevices.length})
           </h3>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: '100%', maxWidth: '420px' }}>
+          <div className="action-buttons-group" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', width: '100%', maxWidth: '520px' }}>
             <input 
               type="text" 
-              placeholder="🔍 Buscar placa, IMEI, cliente o SIM..." 
+              placeholder="🔍 Buscar placa, IMEI..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              style={{...styles.input, flex: 1, minWidth: '200px'}}
+              style={{...styles.input, flex: 1, minWidth: '150px'}}
               className="search-input"
             />
+            
+            {/* 📥 BOTÓN DE IMPORTACIÓN MASIVA */}
+            <input 
+              type="file" 
+              accept=".csv" 
+              style={{ display: 'none' }} 
+              id="import-csv-input"
+              onChange={handleImportCSV}
+            />
+            <button 
+              onClick={() => document.getElementById('import-csv-input').click()}
+              style={{...styles.btn, backgroundColor: '#3B82F6', display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 15px', fontSize: '13px'}}
+              title="Cargar fechas desde archivo Excel (.csv)"
+            >
+              📥 Cargar Fechas
+            </button>
+
             <button 
               onClick={handleDownloadExcel}
-              style={{...styles.btn, backgroundColor: '#10B981', display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px'}}
-              title="Descargar Inventario a Excel"
+              style={{...styles.btn, backgroundColor: '#10B981', display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 15px', fontSize: '13px'}}
+              title="Descargar Inventario"
             >
               📊 Exportar
             </button>
@@ -421,13 +521,8 @@ export default function DeviceManagement({ token, devices }) {
                         <th style={styles.th}>Número SIM</th>
                         <th style={styles.th}>Puerto / Marca</th>
                         <th style={styles.th}>Fecha Registro</th>
-                        {/* COLUMNA NUEVA EN LA TABLA */}
                         <th style={styles.th}>Vencimiento</th> 
-                        <th 
-                          onClick={handleSortToggle} 
-                          style={{...styles.th, cursor: 'pointer', userSelect: 'none', color: sortOrder !== 'default' ? '#60A5FA' : '#9CA3AF'}}
-                          title="Clic para ordenar por fecha de conexión"
-                        >
+                        <th onClick={handleSortToggle} style={{...styles.th, cursor: 'pointer', userSelect: 'none', color: sortOrder !== 'default' ? '#60A5FA' : '#9CA3AF'}}>
                           Última Conexión {sortOrder === 'asc' ? '⬆️' : sortOrder === 'desc' ? '⬇️' : '↕️'}
                         </th>
                         <th style={styles.th}>Acciones</th>
@@ -435,7 +530,7 @@ export default function DeviceManagement({ token, devices }) {
                 </thead>
                 <tbody>
                     {sortedDevices.length === 0 ? (
-                      <tr><td colSpan="9" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan con la búsqueda.</td></tr>
+                      <tr><td colSpan="9" style={{padding: '20px', textAlign: 'center', color: '#9CA3AF'}}>No se encontraron GPS que coincidan.</td></tr>
                     ) : (
                       sortedDevices.map(d => {
                           const p = d.attributes?.puerto;
@@ -454,8 +549,6 @@ export default function DeviceManagement({ token, devices }) {
                           if (p === 5093) marcaTexto = 'Ruptela (5093)';
                           
                           const fechaReg = d.attributes?.fechaRegistro ? new Date(d.attributes.fechaRegistro).toLocaleDateString() : 'Antiguo';
-                          
-                          // LÓGICA DE COLOR PARA VENCIMIENTOS
                           const isExpired = d.expirationTime && new Date(d.expirationTime) < new Date();
                           const fechaVenc = d.expirationTime ? new Date(d.expirationTime).toLocaleDateString() : 'Ilimitado';
 
@@ -481,7 +574,7 @@ export default function DeviceManagement({ token, devices }) {
                                         ))}
                                       </select>
                                     ) : (
-                                      <span onClick={() => setInlineAssignDeviceId(d.id)} style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic', cursor: 'pointer', borderBottom: '1px dashed #6B7280'}} title="Clic para asignar cliente a este GPS">
+                                      <span onClick={() => setInlineAssignDeviceId(d.id)} style={{color: '#6B7280', fontSize: '12px', fontStyle: 'italic', cursor: 'pointer', borderBottom: '1px dashed #6B7280'}}>
                                         Sin asignar ✏️
                                       </span>
                                     )}
@@ -492,7 +585,6 @@ export default function DeviceManagement({ token, devices }) {
                                   <td style={styles.td}>{marcaTexto}</td>
                                   <td style={{...styles.td, color: '#60A5FA', fontSize: '12px'}}>{fechaReg}</td>
                                   
-                                  {/* RESULTADO VISUAL DEL VENCIMIENTO */}
                                   <td style={{...styles.td, color: isExpired ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>
                                     {isExpired ? '⚠️ ' : ''}{fechaVenc}
                                   </td>

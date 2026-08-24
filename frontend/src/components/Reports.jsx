@@ -29,7 +29,7 @@ export default function Reports({ devices, token }) {
   
   const [isFetching, setIsFetching] = useState(false);
 
-  // NUEVO ESTADO: Controla la ventana flotante del mapa
+  // ESTADO: Controla la ventana flotante del mapa
   const [mapModal, setMapModal] = useState({ isOpen: false, lat: 0, lng: 0 });
 
   // Traductor Inverso de Coordenadas a Direcciones Reales
@@ -126,23 +126,35 @@ export default function Reports({ devices, token }) {
             fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
                 .then(res => res.ok ? res.json() : [])
                 .then(route => {
-                    const maxSpeeds = {};
-                    route.forEach(pos => {
-                        const dateKey = getSafeDateKey(pos.fixTime);
-                        const speedKmh = pos.speed * 1.852;
-                        if (!maxSpeeds[dateKey] || speedKmh > maxSpeeds[dateKey]) {
-                            maxSpeeds[dateKey] = speedKmh;
-                        }
-                    });
-
                     setSummaryData(prev => prev.map(day => {
-                        const dateKey = getSafeDateKey(day.startTime);
-                        const calculatedMax = maxSpeeds[dateKey];
+                        const startMs = new Date(day.startTime).getTime();
+                        const endMs = new Date(day.endTime).getTime();
+                        
+                        let maxS = 0;
+                        for (let pos of route) {
+                            const t = new Date(pos.fixTime).getTime();
+                            if (t >= startMs && t <= endMs) {
+                                const speedKmh = pos.speed * 1.852;
+                                
+                                if (pos.attributes && pos.attributes.ignition === false) continue;
+                                if (speedKmh > 160) continue;
+                                
+                                if (speedKmh > maxS) {
+                                    maxS = speedKmh;
+                                }
+                            }
+                        }
+
+                        const distanceKm = day.distance ? (day.distance / 1000) : 0;
+                        if (distanceKm < 0.1) {
+                            maxS = 0;
+                        }
+
                         const fallbackMax = day.maxSpeed ? day.maxSpeed * 1.852 : 0;
                         
                         return {
                             ...day,
-                            realMaxSpeed: calculatedMax !== undefined ? calculatedMax : fallbackMax
+                            realMaxSpeed: maxS > 0 ? maxS : fallbackMax
                         };
                     }));
                 })
@@ -375,7 +387,7 @@ export default function Reports({ devices, token }) {
           <th><b>HORA INICIO</b></th>
           <th><b>HORA FIN</b></th>
           <th><b>DISTANCIA TOTAL (KM)</b></th>
-          <th><b>HORAS MOTOR</b></th>
+          <th><b>HORAS MOTOR (BRUTO TRACCAR)</b></th>
           <th><b>VELOCIDAD MÁX (KM/H)</b></th>
         </tr>
       `;
@@ -383,7 +395,11 @@ export default function Reports({ devices, token }) {
         const date = new Date(day.startTime).toLocaleDateString();
         const start = new Date(day.startTime).toLocaleTimeString();
         const end = new Date(day.endTime).toLocaleTimeString();
-        const distance = (day.distance ? (day.distance / 1000) : 0).toFixed(2).replace('.', ',');
+        
+        const distanceVal = day.distance ? (day.distance / 1000) : 0;
+        const distance = distanceVal.toFixed(2).replace('.', ',');
+        
+        // CÁLCULO EXCEL: Horas motor ORIGINALES directamente de la API de Traccar
         const engine = formatDuration(day.engineHours);
         
         let speed = "Calculando...";
@@ -661,10 +677,10 @@ export default function Reports({ devices, token }) {
                 <tbody>
                   {summaryData.length === 0 ? <tr><td colSpan="6" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
                   summaryData.map((day, index) => {
-                    const distance = day.distance ? (day.distance / 1000) : 0;
+                    const distanceVal = day.distance ? (day.distance / 1000) : 0;
                     const isCalculating = day.realMaxSpeed === -1;
                     const maxSpeed = isCalculating ? 0 : (day.realMaxSpeed !== undefined ? day.realMaxSpeed : (day.maxSpeed ? day.maxSpeed * 1.852 : 0));
-                    
+
                     return (
                       <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
                         <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>
@@ -676,8 +692,11 @@ export default function Reports({ devices, token }) {
                         <td style={styles.td}>
                           {new Date(day.endTime).toLocaleTimeString()}
                         </td>
-                        <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{distance.toFixed(2)} km</td>
+                        <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{distanceVal.toFixed(2)} km</td>
+                        
+                        {/* RESULTADO ORIGINAL DE TRACCAR EN PANTALLA */}
                         <td style={{...styles.td, color: '#10B981'}}>{formatDuration(day.engineHours)}</td>
+                        
                         <td style={{...styles.td, color: isCalculating ? '#F59E0B' : '#EF4444', fontWeight: 'bold'}}>
                           {isCalculating ? 'Calculando...' : `${maxSpeed.toFixed(1)} km/h`}
                         </td>
@@ -732,7 +751,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3. TABLA NUEVA: INFORME COMPLETO ECOPETROL (AHORA CON BOTÓN DE MAPA) */}
+        {/* 3. TABLA NUEVA: INFORME COMPLETO ECOPETROL */}
         {reportType === 'ecopetrol' && (
           <>
             <h3 style={styles.tableTitle}>Informe Completo de Ecopetrol ({routeData.length} registros extraídos)</h3>
@@ -771,7 +790,6 @@ export default function Reports({ devices, token }) {
                         <td style={styles.td}>{pos.latitude.toFixed(5)}</td>
                         <td style={styles.td}>{pos.longitude.toFixed(5)}</td>
                         <td style={{...styles.td, fontSize: '12px', maxWidth: '250px', whiteSpace: 'normal'}}>
-                          {/* BOTÓN INTERACTIVO PARA ABRIR MAPA FLOTANTE */}
                           <button 
                             type="button" 
                             onClick={() => setMapModal({ isOpen: true, lat: pos.latitude, lng: pos.longitude })}
@@ -791,7 +809,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 4 & 5. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
+        {/* 4. TABLAS: EVENTOS (VELOCIDAD FLOTA, INDIVIDUAL Y CONDUCCIÓN) */}
         {(reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones / Alertas ({eventsData.length} eventos)</h3>
@@ -853,7 +871,7 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 6. TABLAS: RALENTÍ Y PARADAS */}
+        {/* 5 & 6. TABLAS: RALENTÍ Y PARADAS */}
         {(reportType === 'stops' || reportType === 'idle') && (
           <>
             <h3 style={styles.tableTitle}>{reportType === 'idle' ? 'Tiempos en Ralentí (Motor encendido sin movimiento)' : 'Registro de Paradas' } ({stopsData.length} eventos)</h3>
