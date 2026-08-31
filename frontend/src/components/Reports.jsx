@@ -120,7 +120,38 @@ export default function Reports({ devices, token }) {
         const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
 
         if (resSummary.ok) {
-            let summary = await resSummary.json();
+            let rawSummary = await resSummary.json();
+
+            // 🔥 MAGIA MATEMÁTICA: Agrupador por Fecha Local y Filtro Anti-Fantasmas
+            const grouped = {};
+            rawSummary.forEach(day => {
+                // Filtramos la "basura satelital" de 0 km y 0 horas (Como la 2da fila de tu día 29)
+                if (day.distance < 10 && day.engineHours === 0) return;
+
+                const localDate = new Date(day.startTime).toLocaleDateString();
+
+                if (!grouped[localDate]) {
+                    grouped[localDate] = { ...day };
+                } else {
+                    // Si el día ya existe (Fragmentado por el UTC), sumamos sus totales
+                    grouped[localDate].distance += day.distance;
+                    grouped[localDate].engineHours += day.engineHours;
+                    grouped[localDate].maxSpeed = Math.max(grouped[localDate].maxSpeed || 0, day.maxSpeed || 0);
+                    
+                    // Aseguramos que muestre la primera hora de inicio del día
+                    if (new Date(day.startTime) < new Date(grouped[localDate].startTime)) {
+                        grouped[localDate].startTime = day.startTime;
+                    }
+                    // Aseguramos que muestre la última conexión del día
+                    if (new Date(day.endTime) > new Date(grouped[localDate].endTime)) {
+                        grouped[localDate].endTime = day.endTime;
+                    }
+                }
+            });
+
+            // Convertimos el objeto agrupado de vuelta al arreglo que usa la tabla
+            let summary = Object.values(grouped);
+
             setSummaryData(summary.map(day => ({ ...day, realMaxSpeed: -1 })));
             
             fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
@@ -592,14 +623,14 @@ export default function Reports({ devices, token }) {
               style={styles.input}
             >
                 {reportType === 'fleet_speed' ? (
-                   <option value="all">Toda la Flota</option>
+                  <option value="all">Toda la Flota</option>
                 ) : (
-                   <option value="">-- Seleccionar --</option>
+                  <option value="">-- Seleccionar --</option>
                 )}
                 {reportType !== 'fleet_speed' && devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
-         
+        
           <div style={{flex: 1, minWidth: '220px'}}>
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
@@ -645,13 +676,13 @@ export default function Reports({ devices, token }) {
                 </div>
             </>
           )}
- 
+
           <button type="submit" disabled={isFetching} style={styles.btn}>
             {isFetching ? 'Analizando...' : 'Analizar Data'}
           </button>
           
           <button type="button" onClick={handleDownloadExcel} style={{...styles.btn, backgroundColor: '#10B981'}}>
-             Descargar Excel
+            Descargar Excel
           </button>
         </form>
       </div>
