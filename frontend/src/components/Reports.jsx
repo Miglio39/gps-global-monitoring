@@ -28,6 +28,7 @@ export default function Reports({ devices, token }) {
   const [stopsData, setStopsData] = useState([]);
   
   const [isFetching, setIsFetching] = useState(false);
+  const [progressMsg, setProgressMsg] = useState(''); // Indicador de progreso en vivo
 
   // ESTADO: Controla la ventana flotante del mapa
   const [mapModal, setMapModal] = useState({ isOpen: false, lat: 0, lng: 0 });
@@ -59,33 +60,38 @@ export default function Reports({ devices, token }) {
     return `Lat: ${lat.toFixed(4)}, Lon: ${lon.toFixed(4)}`;
   };
 
+  // 🔥 CORRECCIÓN DEL RANGO RÁPIDO: Calendario a prueba de desbordamientos (Mes Anterior)
   const handleRangeChange = (rangeValue) => {
     setQuickRange(rangeValue);
     if (rangeValue === 'custom') return;
 
     const now = new Date(); 
-    const start = new Date(now); 
-    const end = new Date(now);
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const date = now.getDate();
+
+    let start, end;
 
     if (rangeValue === 'today') { 
-      start.setHours(0, 0, 0, 0); end.setHours(23, 59, 59, 999);
+      start = new Date(year, month, date, 0, 0, 0, 0);
+      end = new Date(year, month, date, 23, 59, 59, 999);
     } 
     else if (rangeValue === 'yesterday') { 
-      start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0); 
-      end.setDate(end.getDate() - 1); end.setHours(23, 59, 59, 999);
+      start = new Date(year, month, date - 1, 0, 0, 0, 0);
+      end = new Date(year, month, date - 1, 23, 59, 59, 999);
     } 
     else if (rangeValue === 'thisWeek') { 
       const currentDay = now.getDay() === 0 ? 7 : now.getDay();
-      start.setDate(now.getDate() - currentDay + 1); start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999);
+      start = new Date(year, month, date - currentDay + 1, 0, 0, 0, 0);
+      end = new Date(year, month, date, 23, 59, 59, 999);
     } 
     else if (rangeValue === 'thisMonth') { 
-      start.setDate(1); start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999); 
+      start = new Date(year, month, 1, 0, 0, 0, 0);
+      end = new Date(year, month, date, 23, 59, 59, 999);
     } 
     else if (rangeValue === 'lastMonth') { 
-      start.setMonth(now.getMonth() - 1, 1); start.setHours(0, 0, 0, 0);
-      end.setMonth(now.getMonth(), 0); end.setHours(23, 59, 59, 999);
+      start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      end = new Date(year, month, 0, 23, 59, 59, 999);
     }
 
     const format = (d) => `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}T${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
@@ -104,14 +110,31 @@ export default function Reports({ devices, token }) {
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   };
 
+  // Magia Matemática V4: Filtro Inteligente para Cables ACC / Switch
+  const calculateRealEngineTime = (rawEngineMs, distanceKm, avgSpeedKnots) => {
+    let finalMs = rawEngineMs || 0;
+    if (distanceKm > 2) {
+      const avgKmh = (avgSpeedKnots * 1.852) || 0;
+      const speedToUse = (avgKmh > 15 && avgKmh < 110) ? avgKmh : 40;
+      const expectedMovingMs = (distanceKm / speedToUse) * 3600000;
+      
+      if (finalMs < expectedMovingMs) {
+        finalMs = expectedMovingMs * 1.15;
+      }
+    }
+    return finalMs;
+  };
+
   const handleFetchData = async (e) => {
     e.preventDefault();
     setIsFetching(true);
+    setProgressMsg(''); 
     
     setSummaryData([]); setRouteData([]); setEventsData([]); setStopsData([]);
 
-    const fromISO = new Date(reportConfig.from).toISOString();
-    const toISO = new Date(reportConfig.to).toISOString();
+    // CODIFICACIÓN ESTRICTA DE LA URL
+    const fromISO = encodeURIComponent(new Date(reportConfig.from).toISOString());
+    const toISO = encodeURIComponent(new Date(reportConfig.to).toISOString());
     const baseParams = `deviceId=${reportConfig.deviceId}&from=${fromISO}&to=${toISO}`;
     const headers = { 'Authorization': `Basic ${token}`, 'Accept': 'application/json' };
 
@@ -121,71 +144,35 @@ export default function Reports({ devices, token }) {
 
         if (resSummary.ok) {
             let rawSummary = await resSummary.json();
-
-            // 🔥 MAGIA MATEMÁTICA: Agrupador por Fecha Local y Filtro Anti-Fantasmas
-            const grouped = {};
-            rawSummary.forEach(day => {
-                // Filtramos la "basura satelital" de 0 km y 0 horas (Como la 2da fila de tu día 29)
-                if (day.distance < 10 && day.engineHours === 0) return;
-
-                const localDate = new Date(day.startTime).toLocaleDateString();
-
-                if (!grouped[localDate]) {
-                    grouped[localDate] = { ...day };
-                } else {
-                    // Si el día ya existe (Fragmentado por el UTC), sumamos sus totales
-                    grouped[localDate].distance += day.distance;
-                    grouped[localDate].engineHours += day.engineHours;
-                    grouped[localDate].maxSpeed = Math.max(grouped[localDate].maxSpeed || 0, day.maxSpeed || 0);
-                    
-                    // Aseguramos que muestre la primera hora de inicio del día
-                    if (new Date(day.startTime) < new Date(grouped[localDate].startTime)) {
-                        grouped[localDate].startTime = day.startTime;
-                    }
-                    // Aseguramos que muestre la última conexión del día
-                    if (new Date(day.endTime) > new Date(grouped[localDate].endTime)) {
-                        grouped[localDate].endTime = day.endTime;
-                    }
-                }
+            
+            let summary = rawSummary.map(day => {
+                const distanceKm = day.distance ? (day.distance / 1000) : 0;
+                const realEngine = calculateRealEngineTime(day.engineHours, distanceKm, day.averageSpeed);
+                return { ...day, realMaxSpeed: -1, realEngineHours: realEngine };
             });
 
-            // Convertimos el objeto agrupado de vuelta al arreglo que usa la tabla
-            let summary = Object.values(grouped);
-
-            setSummaryData(summary.map(day => ({ ...day, realMaxSpeed: -1 })));
+            setSummaryData(summary);
             
             fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
                 .then(res => res.ok ? res.json() : [])
                 .then(route => {
+                    const maxSpeeds = {};
+                    route.forEach(pos => {
+                        const dateKey = getSafeDateKey(pos.fixTime);
+                        const speedKmh = pos.speed * 1.852;
+                        if (!maxSpeeds[dateKey] || speedKmh > maxSpeeds[dateKey]) {
+                            maxSpeeds[dateKey] = speedKmh;
+                        }
+                    });
+
                     setSummaryData(prev => prev.map(day => {
-                        const startMs = new Date(day.startTime).getTime();
-                        const endMs = new Date(day.endTime).getTime();
-                        
-                        let maxS = 0;
-                        for (let pos of route) {
-                            const t = new Date(pos.fixTime).getTime();
-                            if (t >= startMs && t <= endMs) {
-                                const speedKmh = pos.speed * 1.852;
-                                
-                                if (pos.attributes && pos.attributes.ignition === false) continue;
-                                if (speedKmh > 160) continue;
-                                
-                                if (speedKmh > maxS) {
-                                    maxS = speedKmh;
-                                }
-                            }
-                        }
-
-                        const distanceKm = day.distance ? (day.distance / 1000) : 0;
-                        if (distanceKm < 0.1) {
-                            maxS = 0;
-                        }
-
+                        const dateKey = getSafeDateKey(day.startTime);
+                        const calculatedMax = maxSpeeds[dateKey];
                         const fallbackMax = day.maxSpeed ? day.maxSpeed * 1.852 : 0;
                         
                         return {
                             ...day,
-                            realMaxSpeed: maxS > 0 ? maxS : fallbackMax
+                            realMaxSpeed: calculatedMax !== undefined ? calculatedMax : fallbackMax
                         };
                     }));
                 })
@@ -215,16 +202,24 @@ export default function Reports({ devices, token }) {
         }
       }
       else if (reportType === 'fleet_speed') {
-        const allEvents = [];
-        const chunkSize = 10; 
+        // 🔥 Chunking de rutas sin depender del /summary de Traccar 🔥
+        let allEvents = [];
+        const totalVehicles = devices.length;
+        const chunkSize = 2; // Extraemos estrictamente de a 2 para no asfixiar el servidor
 
-        for (let i = 0; i < devices.length; i += chunkSize) {
+        for (let i = 0; i < totalVehicles; i += chunkSize) {
             const chunk = devices.slice(i, i + chunkSize);
+            
+            // Actualización visual del progreso
+            setProgressMsg(`Analizando ${Math.min(i + chunkSize, totalVehicles)} de ${totalVehicles} vehículos...`);
+
             const promises = chunk.map(device => {
                 const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
                 return fetch(`${BASE_URL}/api/reports/route?${params}`, { headers })
                     .then(res => res.ok ? res.json() : [])
                     .then(route => {
+                        if (!Array.isArray(route)) return [];
+                        // Extraemos la infracción matemáticamente y destruimos la ruta gigante
                         const overspeed = route.filter(pos => (pos.speed * 1.852) > speedLimit);
                         return overspeed.map(pos => ({
                             id: pos.id,
@@ -238,12 +233,126 @@ export default function Reports({ devices, token }) {
                     })
                     .catch(() => []); 
             });
+
             const chunkResults = await Promise.all(promises);
             allEvents.push(...chunkResults.flat());
+            
+            // Descanso obligatorio de 400ms para cuidar la memoria RAM
+            await new Promise(resolve => setTimeout(resolve, 400));
         }
         
         allEvents.sort((a, b) => new Date(b.serverTime) - new Date(a.serverTime));
         setEventsData(allEvents);
+      }
+      // =========================================================================
+      // 🔥 NUEVO: INFORME HÁBITOS DE CONDUCCIÓN (INDIVIDUAL DIARIO)
+      // =========================================================================
+      else if (reportType === 'behavior') {
+        setProgressMsg('Analizando telemetría y consolidando infracciones...');
+        const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
+        const resRoute = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
+
+        if (resSummary.ok && resRoute.ok) {
+            const rawSummary = await resSummary.json();
+            const rawRoute = await resRoute.json();
+
+            const grouped = {};
+            rawSummary.forEach(day => {
+                if (day.distance < 10 && day.engineHours === 0) return;
+                const localDate = new Date(day.startTime).toLocaleDateString();
+                if (!grouped[localDate]) {
+                    grouped[localDate] = { 
+                        dateStr: localDate, 
+                        distanceKm: day.distance / 1000,
+                        overspeeds: 0, harshAccels: 0, harshBrakes: 0
+                    };
+                } else {
+                    grouped[localDate].distanceKm += (day.distance / 1000);
+                }
+            });
+
+            let isOver = false;
+            for (let i = 1; i < rawRoute.length; i++) {
+                const p1 = rawRoute[i-1];
+                const p2 = rawRoute[i];
+                const speed1 = p1.speed * 1.852;
+                const speed2 = p2.speed * 1.852;
+                const deltaT = (new Date(p2.fixTime).getTime() - new Date(p1.fixTime).getTime()) / 1000;
+                const localDate = new Date(p2.fixTime).toLocaleDateString();
+
+                if (!grouped[localDate]) continue;
+
+                if (speed2 > speedLimit) {
+                    if (!isOver) { grouped[localDate].overspeeds++; isOver = true; }
+                } else { isOver = false; }
+
+                if (deltaT > 0 && deltaT <= 10 && speed2 > 10) {
+                    const acc = ((speed2 - speed1) / 3.6) / deltaT;
+                    if (acc > 2.5) grouped[localDate].harshAccels++;
+                    if (acc < -3.0) grouped[localDate].harshBrakes++;
+                }
+            }
+            setSummaryData(Object.values(grouped));
+        }
+      }
+      // =========================================================================
+      // 🔥 NUEVO: RANKING DE CONDUCCIÓN (FLOTA COMPLETA CON CHUNKING)
+      // =========================================================================
+      else if (reportType === 'fleet_behavior') {
+        let fleetStats = [];
+        const totalVehicles = devices.length;
+        const chunkSize = 2; // Por lotes pequeños para no estallar el servidor
+
+        for (let i = 0; i < totalVehicles; i += chunkSize) {
+            const chunk = devices.slice(i, i + chunkSize);
+            setProgressMsg(`Auditando hábitos: Vehículos ${Math.min(i + chunkSize, totalVehicles)} de ${totalVehicles}...`);
+
+            const promises = chunk.map(async (device) => {
+                let distanceKm = 0; let overspeeds = 0; let harshAccels = 0; let harshBrakes = 0;
+                const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
+                
+                try {
+                    const resSum = await fetch(`${BASE_URL}/api/reports/summary?${params}`, { headers });
+                    if (resSum.ok) {
+                        const sums = await resSum.json();
+                        if (sums && sums.length > 0) distanceKm = sums[0].distance / 1000;
+                    }
+                    
+                    const resRoute = await fetch(`${BASE_URL}/api/reports/route?${params}`, { headers });
+                    if (resRoute.ok) {
+                        const rawRoute = await resRoute.json();
+                        let isOver = false;
+                        for (let j = 1; j < rawRoute.length; j++) {
+                            const speed1 = rawRoute[j-1].speed * 1.852;
+                            const speed2 = rawRoute[j].speed * 1.852;
+                            const deltaT = (new Date(rawRoute[j].fixTime).getTime() - new Date(rawRoute[j-1].fixTime).getTime()) / 1000;
+
+                            if (speed2 > speedLimit) {
+                                if (!isOver) { overspeeds++; isOver = true; }
+                            } else { isOver = false; }
+
+                            if (deltaT > 0 && deltaT <= 10 && speed2 > 10) {
+                                const acc = ((speed2 - speed1) / 3.6) / deltaT;
+                                if (acc > 2.5) harshAccels++;
+                                if (acc < -3.0) harshBrakes++;
+                            }
+                        }
+                    }
+                } catch(e) { console.warn("Fallo auditoría en:", device.name); }
+
+                return { name: device.name, distanceKm, overspeeds, harshAccels, harshBrakes };
+            });
+
+            const chunkResults = await Promise.all(promises);
+            fleetStats.push(...chunkResults);
+            
+            // Pausa entre lotes
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        // Ordenar del más infractor al mejor conductor
+        fleetStats.sort((a, b) => (b.overspeeds + b.harshBrakes + b.harshAccels) - (a.overspeeds + a.harshBrakes + a.harshAccels));
+        setSummaryData(fleetStats);
       }
       else if (reportType === 'harsh') {
         const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
@@ -372,6 +481,7 @@ export default function Reports({ devices, token }) {
         alert("Hubo un problema de conexión al extraer la información. Por favor revisa tu conexión a internet.");
     }
     setIsFetching(false);
+    setProgressMsg(''); // Limpiamos el texto al terminar
   };
 
   const handleDownloadExcel = () => {
@@ -380,8 +490,9 @@ export default function Reports({ devices, token }) {
     }
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
+    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior');
     
-    const placaVehiculo = reportType === 'fleet_speed' ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
+    const placaVehiculo = isFleetReport ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
 
@@ -394,6 +505,8 @@ export default function Reports({ devices, token }) {
     else if (reportType === 'harsh') nombreReporteMayus = "INFORME DE ACELERACIONES Y FRENADAS BRUSCAS";
     else if (reportType === 'idle') nombreReporteMayus = "INFORME DE TIEMPOS EN RALENTÍ";
     else if (reportType === 'stops') nombreReporteMayus = "INFORME DE VEHÍCULOS DETENIDOS (PARADAS)";
+    else if (reportType === 'behavior') nombreReporteMayus = "HÁBITOS DE CONDUCCIÓN (INDIVIDUAL DIARIO)";
+    else if (reportType === 'fleet_behavior') nombreReporteMayus = "RANKING DE CONDUCCIÓN (TODA LA FLOTA)";
 
     let htmlTemplate = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -418,7 +531,7 @@ export default function Reports({ devices, token }) {
           <th><b>HORA INICIO</b></th>
           <th><b>HORA FIN</b></th>
           <th><b>DISTANCIA TOTAL (KM)</b></th>
-          <th><b>HORAS MOTOR (BRUTO TRACCAR)</b></th>
+          <th><b>HORAS MOTOR (AJUSTADO)</b></th>
           <th><b>VELOCIDAD MÁX (KM/H)</b></th>
         </tr>
       `;
@@ -430,8 +543,7 @@ export default function Reports({ devices, token }) {
         const distanceVal = day.distance ? (day.distance / 1000) : 0;
         const distance = distanceVal.toFixed(2).replace('.', ',');
         
-        // CÁLCULO EXCEL: Horas motor ORIGINALES directamente de la API de Traccar
-        const engine = formatDuration(day.engineHours);
+        const engine = formatDuration(day.realEngineHours !== undefined ? day.realEngineHours : day.engineHours);
         
         let speed = "Calculando...";
         if (day.realMaxSpeed !== -1) {
@@ -450,6 +562,57 @@ export default function Reports({ devices, token }) {
         `;
       });
     } 
+    // EXCEL: HÁBITOS INDIVIDUAL
+    else if (reportType === 'behavior') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>FECHA</b></th>
+          <th><b>DISTANCIA RECORRIDA (KM)</b></th>
+          <th><b>EXCESOS DE VELOCIDAD (>${speedLimit} KM/H)</b></th>
+          <th><b>ACELERACIONES BRUSCAS</b></th>
+          <th><b>FRENADAS BRUSCAS</b></th>
+        </tr>
+      `;
+      summaryData.forEach(day => {
+        htmlTemplate += `
+          <tr>
+            <td>${day.dateStr}</td>
+            <td>${day.distanceKm.toFixed(2).replace('.', ',')}</td>
+            <td>${day.overspeeds}</td>
+            <td>${day.harshAccels}</td>
+            <td>${day.harshBrakes}</td>
+          </tr>
+        `;
+      });
+    }
+    // EXCEL: RANKING DE FLOTA
+    else if (reportType === 'fleet_behavior') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `
+        <tr>
+          <th><b>VEHÍCULO / PLACA</b></th>
+          <th><b>DISTANCIA TOTAL (KM)</b></th>
+          <th><b>EXCESOS DE VELOCIDAD (>${speedLimit} KM/H)</b></th>
+          <th><b>ACELERACIONES BRUSCAS</b></th>
+          <th><b>FRENADAS BRUSCAS</b></th>
+          <th><b>TOTAL INFRACCIONES</b></th>
+        </tr>
+      `;
+      summaryData.forEach(dev => {
+        const total = dev.overspeeds + dev.harshAccels + dev.harshBrakes;
+        htmlTemplate += `
+          <tr>
+            <td>${dev.name}</td>
+            <td>${dev.distanceKm.toFixed(2).replace('.', ',')}</td>
+            <td>${dev.overspeeds}</td>
+            <td>${dev.harshAccels}</td>
+            <td>${dev.harshBrakes}</td>
+            <td><b>${total}</b></td>
+          </tr>
+        `;
+      });
+    }
     else if (reportType === 'route') {
       if (routeData.length === 0) return alert("No hay datos para exportar.");
       htmlTemplate += `
@@ -606,6 +769,9 @@ export default function Reports({ devices, token }) {
     );
   }
 
+  // Constante para evaluar de forma limpia si bloqueamos la lista de vehículos
+  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior');
+
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Módulo de Informes Analíticos</h2>
@@ -616,18 +782,18 @@ export default function Reports({ devices, token }) {
           <div style={{flex: 1, minWidth: '150px'}}>
             <label style={styles.label}>Vehículo:</label>
             <select 
-              required={reportType !== 'fleet_speed'} 
-              disabled={reportType === 'fleet_speed'}
-              value={reportType === 'fleet_speed' ? 'all' : reportConfig.deviceId} 
+              required={!isFleetReport} 
+              disabled={isFleetReport}
+              value={isFleetReport ? 'all' : reportConfig.deviceId} 
               onChange={e => setReportConfig({...reportConfig, deviceId: e.target.value})} 
               style={styles.input}
             >
-                {reportType === 'fleet_speed' ? (
+                {isFleetReport ? (
                   <option value="all">Toda la Flota</option>
                 ) : (
                   <option value="">-- Seleccionar --</option>
                 )}
-                {reportType !== 'fleet_speed' && devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {!isFleetReport && devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
         
@@ -640,12 +806,17 @@ export default function Reports({ devices, token }) {
                 <option value="speed">Exceso de Velocidad (Individual)</option>
                 <option value="fleet_speed">Exceso de Velocidad (Toda la Flota)</option>
                 <option value="harsh">Aceleración y Frenada Brusca</option>
+                
+                {/* 🔥 NUEVAS OPCIONES INTEGRADAS AQUÍ */}
+                <option value="behavior">Hábitos de Conducción (Individual)</option>
+                <option value="fleet_behavior">Ranking de Conducción (Toda la Flota)</option>
+                
                 <option value="idle">Tiempo en Ralentí</option>
                 <option value="stops">Vehículo Detenido (Paradas)</option>
             </select>
           </div>
 
-          {(reportType === 'speed' || reportType === 'fleet_speed') && (
+          {['speed', 'fleet_speed', 'behavior', 'fleet_behavior'].includes(reportType) && (
             <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={speedLimit} onChange={e => setSpeedLimit(e.target.value)} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -678,7 +849,7 @@ export default function Reports({ devices, token }) {
           )}
 
           <button type="submit" disabled={isFetching} style={styles.btn}>
-            {isFetching ? 'Analizando...' : 'Analizar Data'}
+            {isFetching ? (progressMsg || 'Analizando...') : 'Analizar Data'}
           </button>
           
           <button type="button" onClick={handleDownloadExcel} style={{...styles.btn, backgroundColor: '#10B981'}}>
@@ -689,6 +860,79 @@ export default function Reports({ devices, token }) {
 
       <div style={styles.tableContainer}>
         
+        {/* =========================================================
+            NUEVA TABLA 1: HÁBITOS DE CONDUCCIÓN (INDIVIDUAL DIARIO)
+            ========================================================= */}
+        {reportType === 'behavior' && (
+          <>
+            <h3 style={styles.tableTitle}>Hábitos de Conducción (Desglose Diario) ({summaryData.length} días)</h3>
+            <div style={{maxHeight: '500px', overflowY: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        <th>Fecha</th>
+                        <th>Distancia Recorrida</th>
+                        <th>Excesos de Vel. (&gt;{speedLimit} km/h)</th>
+                        <th>Aceleraciones Bruscas</th>
+                        <th>Frenadas Bruscas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {summaryData.length === 0 ? <tr><td colSpan="5" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
+                  summaryData.map((day, index) => (
+                      <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
+                        <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>{day.dateStr}</td>
+                        <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{day.distanceKm.toFixed(2)} km</td>
+                        <td style={{...styles.td, color: day.overspeeds > 0 ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>{day.overspeeds}</td>
+                        <td style={{...styles.td, color: day.harshAccels > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{day.harshAccels}</td>
+                        <td style={{...styles.td, color: day.harshBrakes > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{day.harshBrakes}</td>
+                      </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {/* =========================================================
+            NUEVA TABLA 2: RANKING DE CONDUCCIÓN (FLOTA COMPLETA)
+            ========================================================= */}
+        {reportType === 'fleet_behavior' && (
+          <>
+            <h3 style={styles.tableTitle}>Ranking de Conducción (Toda la Flota Consolidada)</h3>
+            <div style={{maxHeight: '500px', overflowY: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        <th>Vehículo / Placa</th>
+                        <th>Distancia Total</th>
+                        <th>Excesos de Vel. (&gt;{speedLimit} km/h)</th>
+                        <th>Aceleraciones Bruscas</th>
+                        <th>Frenadas Bruscas</th>
+                        <th>Total Infracciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {summaryData.length === 0 ? <tr><td colSpan="6" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
+                  summaryData.map((dev, index) => {
+                      const total = dev.overspeeds + dev.harshAccels + dev.harshBrakes;
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
+                          <td style={{...styles.td, fontWeight: 'bold', color: '#3B82F6'}}>{dev.name}</td>
+                          <td style={styles.td}>{dev.distanceKm.toFixed(2)} km</td>
+                          <td style={{...styles.td, color: dev.overspeeds > 0 ? '#EF4444' : '#10B981'}}>{dev.overspeeds}</td>
+                          <td style={{...styles.td, color: dev.harshAccels > 0 ? '#F59E0B' : '#10B981'}}>{dev.harshAccels}</td>
+                          <td style={{...styles.td, color: dev.harshBrakes > 0 ? '#F59E0B' : '#10B981'}}>{dev.harshBrakes}</td>
+                          <td style={{...styles.td, color: total > 0 ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>{total}</td>
+                        </tr>
+                      )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         {/* 1. TABLA: DIARIO */}
         {reportType === 'daily' && (
           <>
@@ -701,7 +945,7 @@ export default function Reports({ devices, token }) {
                         <th>Inicio (Primera conexión)</th>
                         <th>Fin (Última conexión)</th>
                         <th>Distancia Total</th>
-                        <th>Horas Motor</th>
+                        <th>Horas Motor (Ajustado)</th>
                         <th>Velocidad Máx (Real)</th>
                     </tr>
                 </thead>
@@ -725,8 +969,9 @@ export default function Reports({ devices, token }) {
                         </td>
                         <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{distanceVal.toFixed(2)} km</td>
                         
-                        {/* RESULTADO ORIGINAL DE TRACCAR EN PANTALLA */}
-                        <td style={{...styles.td, color: '#10B981'}}>{formatDuration(day.engineHours)}</td>
+                        <td style={{...styles.td, color: '#10B981'}}>
+                          {formatDuration(day.realEngineHours !== undefined ? day.realEngineHours : day.engineHours)}
+                        </td>
                         
                         <td style={{...styles.td, color: isCalculating ? '#F59E0B' : '#EF4444', fontWeight: 'bold'}}>
                           {isCalculating ? 'Calculando...' : `${maxSpeed.toFixed(1)} km/h`}
@@ -851,11 +1096,12 @@ export default function Reports({ devices, token }) {
                         {reportType === 'fleet_speed' && <th>Vehículo / Placa</th>}
                         <th>Fecha y Hora</th>
                         <th>Tipo de Evento</th>
-                        <th>Análisis Físico y Detalle</th>
+                        <th>Severidad</th>
+                        <th>Detalle Físico / Telemetría</th>
                     </tr>
                 </thead>
                 <tbody>
-                  {eventsData.length === 0 ? <tr><td colSpan={reportType === 'fleet_speed' ? 4 : 3} style={styles.emptyText}>Excelente conducción. No se encontraron infracciones.</td></tr> :
+                  {eventsData.length === 0 ? <tr><td colSpan={reportType === 'fleet_speed' ? 5 : 4} style={styles.emptyText}>Excelente conducción. No se encontraron infracciones.</td></tr> :
                   eventsData.map((ev, index) => {
                     let typeText = ev.type;
                     let severityColor = '#F3F4F6'; 
@@ -867,15 +1113,15 @@ export default function Reports({ devices, token }) {
 
                     if (ev.type === 'overspeed') { 
                       typeText = 'Exceso de Velocidad'; severityColor = '#EF4444';
-                      detail = `Registrado: ${(ev.speed * 1.852).toFixed(1)} km/h`;
+                      detail = `Registrado: ${(ev.speed * 1.852).toFixed(1).replace('.', ',')} km/h`;
                     }
                     else if (ev.type === 'harshAcceleration') { 
                       typeText = 'Aceleración Brusca';
-                      detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s (Fuerza: ${ev.acceleration.toFixed(2)} m/s²)`;
+                      detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`;
                     }
                     else if (ev.type === 'harshBraking') { 
-                      typeText = 'Frenada Brusca';
-                      detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s (Fuerza: -${ev.acceleration.toFixed(2)} m/s²)`;
+                      typeText = 'FRENADA BRUSCA';
+                      detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`;
                     }
 
                     return (
@@ -886,11 +1132,13 @@ export default function Reports({ devices, token }) {
                         <td style={styles.td}>{new Date(ev.serverTime).toLocaleString()}</td>
                         <td style={{...styles.td, color: severityColor, fontWeight: 'bold'}}>
                            {typeText} 
-                           {ev.severity && (
-                             <span style={{fontSize: '11px', backgroundColor: '#1F2937', color: severityColor, padding: '2px 6px', borderRadius: '4px', marginLeft: '8px'}}>
+                        </td>
+                        <td style={{...styles.td, color: severityColor, fontWeight: 'bold'}}>
+                           {ev.severity ? (
+                             <span style={{fontSize: '11px', backgroundColor: '#1F2937', color: severityColor, padding: '2px 6px', borderRadius: '4px'}}>
                                {ev.severity}
                              </span>
-                           )}
+                           ) : 'ALERTA'}
                         </td>
                         <td style={{...styles.td, fontSize: '12px', color: '#D1D5DB'}}>{detail}</td>
                       </tr>
@@ -980,7 +1228,6 @@ const styles = {
   tableHead: { color: 'white', fontSize: '13px' },
   td: { padding: '12px 10px', fontSize: '13px' },
   emptyText: { padding: '30px', textAlign: 'center', color: '#6B7280' },
-  // Estilos del Mapa Flotante
   modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
   modalContent: { backgroundColor: '#1F2937', padding: '20px', borderRadius: '12px', width: '90%', maxWidth: '600px', border: '1px solid #374151', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
