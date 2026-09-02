@@ -33,7 +33,7 @@ export default function Reports({ devices, token }) {
   // ESTADO: Controla la ventana flotante del mapa
   const [mapModal, setMapModal] = useState({ isOpen: false, lat: 0, lng: 0 });
 
-  // Traductor Inverso de Coordenadas a Direcciones Reales
+  // Traductor Inverso de Coordenadas a Direcciones Reales (Protegido contra SPAM)
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return 'Coordenadas inválidas';
     
@@ -41,7 +41,8 @@ export default function Reports({ devices, token }) {
     if (geoCache[cacheKey]) return geoCache[cacheKey];
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 350)); 
+      // Retraso de 500ms obligatorio para respetar los límites de la API gratuita (Max 2 req/seg)
+      await new Promise(resolve => setTimeout(resolve, 500)); 
       const res = await fetch(`https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json&accept-language=es`);
       
       if (res.ok) {
@@ -99,29 +100,16 @@ export default function Reports({ devices, token }) {
   };
 
   const formatDuration = (ms) => {
-    if (!ms) return '0h 0m';
+    if (!ms) return '0 h 0 m';
     const hours = Math.floor(ms / 3600000);
     const minutes = Math.floor((ms % 3600000) / 60000);
-    return `${hours}h ${minutes}m`;
+    return `${hours} h ${minutes} m`;
   };
 
-  const getSafeDateKey = (isoString) => {
+  const getLocalDateStr = (isoString) => {
+    if (!isoString) return '';
     const d = new Date(isoString);
-    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  };
-
-  const calculateRealEngineTime = (rawEngineMs, distanceKm, avgSpeedKnots) => {
-    let finalMs = rawEngineMs || 0;
-    if (distanceKm > 2) {
-      const avgKmh = (avgSpeedKnots * 1.852) || 0;
-      const speedToUse = (avgKmh > 15 && avgKmh < 110) ? avgKmh : 40;
-      const expectedMovingMs = (distanceKm / speedToUse) * 3600000;
-      
-      if (finalMs < expectedMovingMs) {
-        finalMs = expectedMovingMs * 1.15;
-      }
-    }
-    return finalMs;
+    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
   };
 
   const handleFetchData = async (e) => {
@@ -139,40 +127,31 @@ export default function Reports({ devices, token }) {
     try {
       if (reportType === 'daily') {
         const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
-
         if (resSummary.ok) {
             let rawSummary = await resSummary.json();
             
-            let summary = rawSummary.map(day => {
-                const distanceKm = day.distance ? (day.distance / 1000) : 0;
-                const realEngine = calculateRealEngineTime(day.engineHours, distanceKm, day.averageSpeed);
-                return { ...day, realMaxSpeed: -1, realEngineHours: realEngine };
+            // AGRUPADOR INTELIGENTE POR DÍA 
+            const grouped = {};
+            rawSummary.forEach(day => {
+                if (day.distance < 10 && day.engineHours === 0) return; // Filtrar basura satelital
+                
+                const localDateStr = getLocalDateStr(day.startTime);
+
+                if (!grouped[localDateStr]) {
+                    grouped[localDateStr] = { ...day, displayDate: localDateStr };
+                } else {
+                    grouped[localDateStr].distance += day.distance;
+                    grouped[localDateStr].engineHours += day.engineHours;
+                    grouped[localDateStr].averageSpeed = (grouped[localDateStr].averageSpeed + (day.averageSpeed || 0)) / 2;
+
+                    if (new Date(day.startTime).getTime() < new Date(grouped[localDateStr].startTime).getTime()) {
+                        grouped[localDateStr].startTime = day.startTime;
+                        grouped[localDateStr].startOdometer = day.startOdometer;
+                    }
+                }
             });
 
-            setSummaryData(summary);
-            
-            fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers })
-                .then(res => res.ok ? res.json() : [])
-                .then(route => {
-                    const maxSpeeds = {};
-                    route.forEach(pos => {
-                        const dateKey = getSafeDateKey(pos.fixTime);
-                        const speedKmh = pos.speed * 1.852;
-                        if (!maxSpeeds[dateKey] || speedKmh > maxSpeeds[dateKey]) {
-                            maxSpeeds[dateKey] = speedKmh;
-                        }
-                    });
-
-                    setSummaryData(prev => prev.map(day => {
-                        const dateKey = getSafeDateKey(day.startTime);
-                        const calculatedMax = maxSpeeds[dateKey];
-                        const fallbackMax = day.maxSpeed ? day.maxSpeed * 1.852 : 0;
-                        return { ...day, realMaxSpeed: calculatedMax !== undefined ? calculatedMax : fallbackMax };
-                    }));
-                })
-                .catch(() => {
-                    setSummaryData(prev => prev.map(day => ({ ...day, realMaxSpeed: day.maxSpeed ? day.maxSpeed * 1.852 : 0 })));
-                });
+            setSummaryData(Object.values(grouped));
         }
       } 
       else if (reportType === 'route' || reportType === 'ecopetrol') {
@@ -189,23 +168,28 @@ export default function Reports({ devices, token }) {
                 serverTime: pos.fixTime, 
                 type: 'overspeed', 
                 speed: pos.speed, 
-                ignition: pos.attributes?.ignition, // 🔥 Recuperamos estado de motor
+                ignition: pos.attributes?.ignition,
                 latitude: pos.latitude, 
                 longitude: pos.longitude
             }));
             
             setEventsData(events);
             
-            // Traducción de direcciones
-            events.forEach(async (ev) => {
-                const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
-                setEventsData(prev => {
-                    const updated = [...prev];
-                    const idx = updated.findIndex(e => e.id === ev.id);
-                    if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
-                    return updated;
-                });
-            });
+            // Traducción Secuencial (Protección Anti-Crash)
+            const translateEvents = async () => {
+                const limit = Math.min(events.length, 100); // Límite de seguridad
+                for (let i = 0; i < limit; i++) {
+                    const ev = events[i];
+                    const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
+                    setEventsData(prev => {
+                        const updated = [...prev];
+                        const idx = updated.findIndex(e => e.id === ev.id);
+                        if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
+                        return updated;
+                    });
+                }
+            };
+            translateEvents();
         }
       }
       else if (reportType === 'fleet_speed') {
@@ -225,14 +209,7 @@ export default function Reports({ devices, token }) {
                         if (!Array.isArray(route)) return [];
                         const overspeed = route.filter(pos => (pos.speed * 1.852) > speedLimit);
                         return overspeed.map(pos => ({
-                            id: pos.id, 
-                            deviceName: device.name, 
-                            serverTime: pos.fixTime, 
-                            type: 'overspeed', 
-                            speed: pos.speed, 
-                            ignition: pos.attributes?.ignition, // 🔥 Recuperamos estado de motor
-                            latitude: pos.latitude, 
-                            longitude: pos.longitude
+                            id: pos.id, deviceName: device.name, serverTime: pos.fixTime, type: 'overspeed', speed: pos.speed, ignition: pos.attributes?.ignition, latitude: pos.latitude, longitude: pos.longitude
                         }));
                     }).catch(() => []); 
             });
@@ -245,16 +222,20 @@ export default function Reports({ devices, token }) {
         allEvents.sort((a, b) => new Date(b.serverTime) - new Date(a.serverTime));
         setEventsData(allEvents);
         
-        // Traducción de direcciones
-        allEvents.forEach(async (ev) => {
-            const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
-            setEventsData(prev => {
-                const updated = [...prev];
-                const idx = updated.findIndex(e => e.id === ev.id);
-                if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
-                return updated;
-            });
-        });
+        const translateEvents = async () => {
+            const limit = Math.min(allEvents.length, 100);
+            for (let i = 0; i < limit; i++) {
+                const ev = allEvents[i];
+                const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
+                setEventsData(prev => {
+                    const updated = [...prev];
+                    const idx = updated.findIndex(e => e.id === ev.id);
+                    if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
+                    return updated;
+                });
+            }
+        };
+        translateEvents();
       }
       else if (reportType === 'behavior') {
         setProgressMsg('Analizando telemetría y consolidando infracciones...');
@@ -268,14 +249,15 @@ export default function Reports({ devices, token }) {
             const grouped = {};
             rawSummary.forEach(day => {
                 if (day.distance < 10 && day.engineHours === 0) return;
-                const localDate = new Date(day.startTime).toLocaleDateString();
-                if (!grouped[localDate]) {
-                    grouped[localDate] = { 
-                        dateStr: localDate, distanceKm: day.distance / 1000,
+                const localDateStr = getLocalDateStr(day.startTime);
+                
+                if (!grouped[localDateStr]) {
+                    grouped[localDateStr] = { 
+                        dateStr: localDateStr, distanceKm: day.distance / 1000,
                         overspeeds: 0, harshAccels: 0, harshBrakes: 0
                     };
                 } else {
-                    grouped[localDate].distanceKm += (day.distance / 1000);
+                    grouped[localDateStr].distanceKm += (day.distance / 1000);
                 }
             });
 
@@ -286,18 +268,19 @@ export default function Reports({ devices, token }) {
                 const speed1 = p1.speed * 1.852;
                 const speed2 = p2.speed * 1.852;
                 const deltaT = (new Date(p2.fixTime).getTime() - new Date(p1.fixTime).getTime()) / 1000;
-                const localDate = new Date(p2.fixTime).toLocaleDateString();
+                
+                const localDateStr = getLocalDateStr(p2.fixTime);
 
-                if (!grouped[localDate]) continue;
+                if (!grouped[localDateStr]) continue;
 
                 if (speed2 > speedLimit) {
-                    if (!isOver) { grouped[localDate].overspeeds++; isOver = true; }
+                    if (!isOver) { grouped[localDateStr].overspeeds++; isOver = true; }
                 } else { isOver = false; }
 
                 if (deltaT > 0 && deltaT <= 10 && speed2 > 10) {
                     const acc = ((speed2 - speed1) / 3.6) / deltaT;
-                    if (acc > 2.5) grouped[localDate].harshAccels++;
-                    if (acc < -3.0) grouped[localDate].harshBrakes++;
+                    if (acc > 2.5) grouped[localDateStr].harshAccels++;
+                    if (acc < -3.0) grouped[localDateStr].harshBrakes++;
                 }
             }
             setSummaryData(Object.values(grouped));
@@ -414,7 +397,7 @@ export default function Reports({ devices, token }) {
                       speed2: p2.speedKmh, 
                       deltaT, 
                       acceleration: absAccel, 
-                      ignition: p2.attributes?.ignition, // 🔥 Recuperamos estado de motor
+                      ignition: p2.attributes?.ignition, 
                       latitude: p2.latitude, 
                       longitude: p2.longitude
                     };
@@ -429,16 +412,20 @@ export default function Reports({ devices, token }) {
             
             setEventsData(calculatedEvents);
             
-            // Traducción de direcciones
-            calculatedEvents.forEach(async (ev) => {
-                const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
-                setEventsData(prev => {
-                    const updated = [...prev];
-                    const idx = updated.findIndex(e => e.id === ev.id);
-                    if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
-                    return updated;
-                });
-            });
+            const translateEvents = async () => {
+                const limit = Math.min(calculatedEvents.length, 100);
+                for (let i = 0; i < limit; i++) {
+                    const ev = calculatedEvents[i];
+                    const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
+                    setEventsData(prev => {
+                        const updated = [...prev];
+                        const idx = updated.findIndex(e => e.id === ev.id);
+                        if (idx !== -1) updated[idx] = { ...updated[idx], address: finalAddress };
+                        return updated;
+                    });
+                }
+            };
+            translateEvents();
         }
       }
       else if (reportType === 'stops' || reportType === 'idle') {
@@ -448,16 +435,25 @@ export default function Reports({ devices, token }) {
             if (reportType === 'idle') stops = stops.filter(stop => stop.engineHours && stop.engineHours > 0);
             
             setStopsData(stops);
-            stops.forEach(async (stop, index) => {
-                if (!stop.address || /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(stop.address)) {
-                    const finalAddress = await reverseGeocodeFallback(stop.latitude, stop.longitude);
-                    setStopsData(prev => {
-                        const updated = [...prev];
-                        if (updated[index]) updated[index] = { ...updated[index], address: finalAddress };
-                        return updated;
-                    });
+            
+            const translateStops = async () => {
+                const limit = Math.min(stops.length, 100);
+                for (let i = 0; i < limit; i++) {
+                    const stop = stops[i];
+                    if (!stop.address || /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(stop.address)) {
+                        const finalAddress = await reverseGeocodeFallback(stop.latitude, stop.longitude);
+                        setStopsData(prev => {
+                            const updated = [...prev];
+                            // Usamos el índice original para asegurar que actualizamos el correcto
+                            if (updated[i]) {
+                                updated[i] = { ...updated[i], address: finalAddress };
+                            }
+                            return updated;
+                        });
+                    }
                 }
-            });
+            };
+            translateStops();
         }
       }
     } catch (err) { 
@@ -478,7 +474,7 @@ export default function Reports({ devices, token }) {
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
 
-    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO CONSOLIDADO";
+    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO (CRUDO TRACCAR)";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
     else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; 
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
@@ -506,15 +502,16 @@ export default function Reports({ devices, token }) {
 
     if (reportType === 'daily') {
       if (summaryData.length === 0) return alert("No hay datos para exportar.");
-      htmlTemplate += `<tr><th><b>DÍA / FECHA</b></th><th><b>HORA INICIO</b></th><th><b>HORA FIN</b></th><th><b>DISTANCIA TOTAL (KM)</b></th><th><b>HORAS MOTOR</b></th><th><b>VELOCIDAD MÁX (KM/H)</b></th></tr>`;
+      htmlTemplate += `<tr><th><b>DISPOSITIVO</b></th><th><b>FECHA DE INICIO</b></th><th><b>VELOCIDAD MEDIA (KM/H)</b></th><th><b>DISTANCIA (KM)</b></th><th><b>HORAS MOTOR</b></th><th><b>ODÓMETRO INICIAL (KM)</b></th></tr>`;
       summaryData.forEach(day => {
-        const date = new Date(day.startTime).toLocaleDateString();
-        const start = new Date(day.startTime).toLocaleTimeString();
-        const end = new Date(day.endTime).toLocaleTimeString();
-        const distanceVal = day.distance ? (day.distance / 1000) : 0;
-        const finalEngineMs = calculateRealEngineTime(day.engineHours, distanceVal, day.averageSpeed);
-        let speed = day.realMaxSpeed !== -1 ? (day.realMaxSpeed || 0).toFixed(1).replace('.', ',') : "Calculando...";
-        htmlTemplate += `<tr><td>${date}</td><td>${start}</td><td>${end}</td><td>${distanceVal.toFixed(2).replace('.', ',')}</td><td>${formatDuration(finalEngineMs)}</td><td>${speed}</td></tr>`;
+        const deviceName = devices.find(d => d.id === day.deviceId)?.name || 'Desconocido';
+        const dateStr = day.displayDate || getLocalDateStr(day.startTime);
+        const avgSpeed = day.averageSpeed ? (day.averageSpeed * 1.852).toFixed(2).replace('.', ',') : '0,00';
+        const distanceVal = day.distance ? (day.distance / 1000).toFixed(2).replace('.', ',') : '0,00';
+        const engineStr = formatDuration(day.engineHours);
+        const startOdo = day.startOdometer ? (day.startOdometer / 1000).toFixed(2).replace('.', ',') : '0,00';
+
+        htmlTemplate += `<tr><td>${deviceName}</td><td>${dateStr}</td><td>${avgSpeed}</td><td>${distanceVal}</td><td>${engineStr}</td><td>${startOdo}</td></tr>`;
       });
     } 
     else if (reportType === 'behavior') {
@@ -539,7 +536,6 @@ export default function Reports({ devices, token }) {
         const dt = new Date(pos.fixTime).toLocaleString();
         const speed = (pos.speed * 1.852);
         
-        // 🔥 LÓGICA INTELIGENTE DE MOTOR PARA EXCEL (Punto a Punto)
         const isEngineOn = pos.attributes?.ignition || speed > 0;
         const ignition = isEngineOn ? 'Encendido' : 'Apagado';
         
@@ -557,7 +553,6 @@ export default function Reports({ devices, token }) {
         const placa = selectedDevice ? selectedDevice.name : (devices.find(d => String(d.id) === String(pos.deviceId))?.name || 'Desconocido');
         const speed = (pos.speed * 1.852);
         
-        // 🔥 LÓGICA INTELIGENTE DE MOTOR PARA EXCEL (Ecopetrol)
         const isEngineOn = pos.attributes?.ignition || speed > 0;
         const ignition = isEngineOn ? 'Encendido' : 'Apagado';
 
@@ -580,7 +575,6 @@ export default function Reports({ devices, token }) {
         else if (ev.type === 'harshAcceleration') { typeText = 'ACELERACIÓN BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
         else if (ev.type === 'harshBraking') { typeText = 'FRENADA BRUSCA'; detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`; }
         
-        // 🔥 LÓGICA INTELIGENTE DE MOTOR PARA EXCEL (Eventos)
         const speedKmh = ev.speed ? (ev.speed * 1.852) : (ev.speed2 || 0);
         const isEngineOn = ev.ignition || speedKmh > 0;
         detail += ` | Motor: ${isEngineOn ? 'Encendido' : 'Apagado'}`;
@@ -658,7 +652,7 @@ export default function Reports({ devices, token }) {
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <optgroup label="Uso y Tiempos">
-                    <option value="daily">Resumen Diario (Kilometraje)</option>
+                    <option value="daily">Resumen Diario (Crudo)</option>
                     <option value="idle">Tiempo en Ralentí</option>
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                 </optgroup>
@@ -720,7 +714,6 @@ export default function Reports({ devices, token }) {
 
       <div style={styles.tableContainer}>
         
-        {/* TABLAS 1 Y 2: HÁBITOS DE CONDUCCIÓN */}
         {reportType === 'behavior' && (
           <>
             <h3 style={styles.tableTitle}>Hábitos de Conducción (Desglose Diario) ({summaryData.length} días)</h3>
@@ -788,7 +781,6 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 3. TABLA: DIARIO */}
         {reportType === 'daily' && (
           <>
             <h3 style={styles.tableTitle}>Informe Diario Consolidado ({summaryData.length} registros)</h3>
@@ -796,31 +788,32 @@ export default function Reports({ devices, token }) {
               <table style={styles.table}>
                 <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
                     <tr style={styles.tableHead}>
-                        <th>Día / Fecha</th>
-                        <th>Inicio (Primera conexión)</th>
-                        <th>Fin (Última conexión)</th>
-                        <th>Distancia Total</th>
-                        <th>Horas Motor (Ajustado)</th>
-                        <th>Velocidad Máx (Real)</th>
+                        <th>Dispositivo</th>
+                        <th>Fecha de inicio</th>
+                        <th>Velocidad media</th>
+                        <th>Distancia</th>
+                        <th>Horas motor</th>
+                        <th>Odómetro inicial</th>
                     </tr>
                 </thead>
                 <tbody>
                   {summaryData.length === 0 ? <tr><td colSpan="6" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
                   summaryData.map((day, index) => {
-                    const distanceVal = day.distance ? (day.distance / 1000) : 0;
-                    const isCalculating = day.realMaxSpeed === -1;
-                    const maxSpeed = isCalculating ? 0 : (day.realMaxSpeed !== undefined ? day.realMaxSpeed : (day.maxSpeed ? day.maxSpeed * 1.852 : 0));
+                    const deviceName = devices.find(d => d.id === day.deviceId)?.name || 'Desconocido';
+                    const dateStr = day.displayDate || getLocalDateStr(day.startTime);
+                    const avgSpeed = day.averageSpeed ? (day.averageSpeed * 1.852).toFixed(2) : '0.00';
+                    const distanceVal = day.distance ? (day.distance / 1000).toFixed(2) : '0.00';
+                    const engineStr = formatDuration(day.engineHours);
+                    const startOdo = day.startOdometer ? (day.startOdometer / 1000).toFixed(2) : '0.00';
 
                     return (
                       <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
-                        <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>{new Date(day.startTime).toLocaleDateString()}</td>
-                        <td style={styles.td}>{new Date(day.startTime).toLocaleTimeString()}</td>
-                        <td style={styles.td}>{new Date(day.endTime).toLocaleTimeString()}</td>
-                        <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>{distanceVal.toFixed(2)} km</td>
-                        <td style={{...styles.td, color: '#10B981'}}>{formatDuration(day.realEngineHours !== undefined ? day.realEngineHours : day.engineHours)}</td>
-                        <td style={{...styles.td, color: isCalculating ? '#F59E0B' : '#EF4444', fontWeight: 'bold'}}>
-                          {isCalculating ? 'Calculando...' : `${maxSpeed.toFixed(1)} km/h`}
-                        </td>
+                        <td style={{...styles.td, fontWeight: 'bold', color: '#3B82F6'}}>{deviceName}</td>
+                        <td style={{...styles.td, color: '#F3F4F6'}}>{dateStr}</td>
+                        <td style={{...styles.td, color: '#F3F4F6'}}>{avgSpeed} km/h</td>
+                        <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{distanceVal} Km</td>
+                        <td style={{...styles.td, color: '#F59E0B'}}>{engineStr}</td>
+                        <td style={{...styles.td, color: '#D1D5DB'}}>{startOdo} Km</td>
                       </tr>
                     )
                   })}
@@ -830,7 +823,6 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 4. TABLA: DETALLADO PUNTO A PUNTO */}
         {reportType === 'route' && (
           <>
             <h3 style={styles.tableTitle}>Detallado Punto a Punto ({routeData.length} puntos extraídos)</h3>
@@ -849,8 +841,6 @@ export default function Reports({ devices, token }) {
                   {routeData.length === 0 ? <tr><td colSpan="5" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
                   routeData.slice(0, 3000).map((pos) => { 
                     const speed = pos.speed * 1.852;
-                    
-                    // 🔥 LÓGICA INTELIGENTE DE MOTOR APLICADA EN PANTALLA
                     const isEngineOn = pos.attributes?.ignition || speed > 0;
 
                     return (
@@ -869,14 +859,13 @@ export default function Reports({ devices, token }) {
                       </tr>
                     )
                   })}
-                  {routeData.length > 3000 && <tr><td colSpan="5" style={{...styles.emptyText, color: '#F59E0B'}}>Se muestran los primeros 3000 registros.</td></tr>}
+                  {routeData.length > 3000 && <tr><td colSpan="5" style={{...styles.emptyText, color: '#F59E0B'}}>Se muestran los primeros 3000 registros para evitar sobrecarga del navegador.</td></tr>}
                 </tbody>
               </table>
             </div>
           </>
         )}
 
-        {/* 5. TABLA: ECOPETROL (AHORA CON ESTADO MOTOR) */}
         {reportType === 'ecopetrol' && (
           <>
             <h3 style={styles.tableTitle}>Informe Completo de Ecopetrol ({routeData.length} registros extraídos)</h3>
@@ -887,7 +876,6 @@ export default function Reports({ devices, token }) {
                         <th>Placa</th>
                         <th>Fecha</th>
                         <th>Hora</th>
-                        {/* 🔥 NUEVA COLUMNA ECOPETROL */}
                         <th>Estado Motor</th>
                         <th>Velocidad (km/h)</th>
                         <th>Odómetro (km)</th>
@@ -899,15 +887,13 @@ export default function Reports({ devices, token }) {
                 <tbody>
                   {routeData.length === 0 ? <tr><td colSpan="9" style={styles.emptyText}>No hay datos en este rango.</td></tr> :
                   routeData.slice(0, 3000).map((pos) => { 
-                    const speed = (pos.speed * 1.852);
-                    const speedText = speed.toFixed(1);
+                    const speed = (pos.speed * 1.852).toFixed(1);
                     const dt = new Date(pos.fixTime);
                     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
                     const placa = selectedDevice ? selectedDevice.name : (devices.find(d => String(d.id) === String(pos.deviceId))?.name || 'Desconocido');
                     const odometer = ((pos.attributes?.totalDistance || pos.attributes?.odometer || 0) / 1000).toFixed(2);
                     const address = pos.address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`;
-
-                    // 🔥 LÓGICA INTELIGENTE DE MOTOR EN ECOPETROL
+                    
                     const isEngineOn = pos.attributes?.ignition || speed > 0;
 
                     return (
@@ -916,7 +902,7 @@ export default function Reports({ devices, token }) {
                         <td style={styles.td}>{dt.toLocaleDateString()}</td>
                         <td style={styles.td}>{dt.toLocaleTimeString()}</td>
                         <td style={{...styles.td, color: isEngineOn ? '#10B981' : '#6B7280', fontWeight: 'bold'}}>{isEngineOn ? 'Encendido' : 'Apagado'}</td>
-                        <td style={{...styles.td, color: speed > 80 ? '#EF4444' : '#F3F4F6', fontWeight: speed > 80 ? 'bold' : 'normal'}}>{speedText}</td>
+                        <td style={{...styles.td, color: speed > 80 ? '#EF4444' : '#F3F4F6', fontWeight: speed > 80 ? 'bold' : 'normal'}}>{speed}</td>
                         <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{odometer}</td>
                         <td style={styles.td}>{pos.latitude.toFixed(5)}</td>
                         <td style={styles.td}>{pos.longitude.toFixed(5)}</td>
@@ -929,14 +915,13 @@ export default function Reports({ devices, token }) {
                       </tr>
                     )
                   })}
-                  {routeData.length > 3000 && <tr><td colSpan="9" style={{...styles.emptyText, color: '#F59E0B'}}>Se muestran los primeros 3000 registros.</td></tr>}
+                  {routeData.length > 3000 && <tr><td colSpan="9" style={{...styles.emptyText, color: '#F59E0B'}}>Se muestran los primeros 3000 registros para evitar sobrecarga del navegador.</td></tr>}
                 </tbody>
               </table>
             </div>
           </>
         )}
 
-        {/* 6. TABLAS: EVENTOS PUNTO A PUNTO (CON ESTADO MOTOR EN EL DETALLE) */}
         {(reportType === 'speed' || reportType === 'harsh' || reportType === 'fleet_speed') && (
           <>
             <h3 style={styles.tableTitle}>Registro de Infracciones Detalladas ({eventsData.length} eventos)</h3>
@@ -976,7 +961,6 @@ export default function Reports({ devices, token }) {
                       detail = `De ${ev.speed1.toFixed(0)} a ${ev.speed2.toFixed(0)} km/h en ${ev.deltaT.toFixed(1)}s`;
                     }
 
-                    // 🔥 LÓGICA INTELIGENTE DE MOTOR PARA EVENTOS
                     const speedKmh = ev.speed ? (ev.speed * 1.852) : (ev.speed2 || 0);
                     const isEngineOn = ev.ignition || speedKmh > 0;
                     detail += ` | Motor: ${isEngineOn ? 'Encendido' : 'Apagado'}`;
@@ -1014,7 +998,6 @@ export default function Reports({ devices, token }) {
           </>
         )}
 
-        {/* 7 & 8. TABLAS: RALENTÍ Y PARADAS */}
         {(reportType === 'stops' || reportType === 'idle') && (
           <>
             <h3 style={styles.tableTitle}>{reportType === 'idle' ? 'Tiempos en Ralentí (Motor encendido sin movimiento)' : 'Registro de Paradas' } ({stopsData.length} eventos)</h3>
@@ -1052,7 +1035,6 @@ export default function Reports({ devices, token }) {
 
       </div>
 
-      {/* RENDERIZADO DEL MAPA FLOTANTE */}
       {mapModal.isOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
