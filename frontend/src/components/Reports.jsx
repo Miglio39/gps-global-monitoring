@@ -474,7 +474,7 @@ export default function Reports({ devices, token }) {
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
 
-    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO (CRUDO TRACCAR)";
+    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO ";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
     else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; 
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
@@ -652,7 +652,7 @@ export default function Reports({ devices, token }) {
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <optgroup label="Uso y Tiempos">
-                    <option value="daily">Resumen Diario (Crudo)</option>
+                    <option value="daily">Resumen Diario </option>
                     <option value="idle">Tiempo en Ralentí</option>
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                 </optgroup>
