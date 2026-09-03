@@ -7,6 +7,87 @@ const geoCache = {};
 // EL DOMINIO DE TU SERVIDOR
 const BASE_URL = 'https://api.globalmonitorgps.com'; 
 
+// 🔥 MOTOR CINEMÁTICO CENTRALIZADO (Comparte la misma lógica en todos los reportes)
+const calculateHarshEvents = (rawRoute) => {
+  const calculatedEvents = [];
+
+  const CONFIG = {
+    minSpeedKmh: 15,          
+    minDeltaVKmh: 15,         
+    maxTimeSec: 5,            
+    minTimeSec: 1,            
+    accelThresholds: { mod: 1.5, harsh: 2.5, extreme: 3.5 },
+    brakeThresholds: { mod: 2.0, harsh: 3.0, extreme: 4.5 },
+    physicalLimitG: 9.8       
+  };
+
+  const getSeverity = (accel, isAcceleration) => {
+    const t = isAcceleration ? CONFIG.accelThresholds : CONFIG.brakeThresholds;
+    if (accel >= t.extreme) return 'Muy Brusco';
+    if (accel >= t.harsh) return 'Brusco';
+    if (accel >= t.mod) return 'Moderado';
+    return 'Normal';
+  };
+
+  const smoothedRoute = [];
+  for (let i = 0; i < rawRoute.length; i++) {
+    let sumKnots = 0; let count = 0;
+    for (let j = Math.max(0, i - 1); j <= Math.min(rawRoute.length - 1, i + 1); j++) {
+      sumKnots += rawRoute[j].speed; count++;
+    }
+    const speedKmh = (sumKnots / count) * 1.852;
+    smoothedRoute.push({ ...rawRoute[i], speedKmh, speedMs: speedKmh / 3.6, timeMs: new Date(rawRoute[i].fixTime).getTime() });
+  }
+
+  let skipAnalysisUntil = 0;
+  for (let i = 0; i < smoothedRoute.length - 1; i++) {
+    const p1 = smoothedRoute[i];
+    if (p1.timeMs < skipAnalysisUntil || p1.speedKmh < CONFIG.minSpeedKmh) continue;
+
+    let maxAbsAccel = 0; let bestEvent = null;
+
+    for (let j = i + 1; j < smoothedRoute.length; j++) {
+      const p2 = smoothedRoute[j];
+      const deltaT = (p2.timeMs - p1.timeMs) / 1000; 
+      if (deltaT > CONFIG.maxTimeSec) break;
+      if (deltaT < CONFIG.minTimeSec) continue;
+
+      const absDeltaV_Kmh = Math.abs(p2.speedKmh - p1.speedKmh);
+      const acceleration = (p2.speedMs - p1.speedMs) / deltaT;
+      const absAccel = Math.abs(acceleration);
+
+      if (absAccel > CONFIG.physicalLimitG) continue; 
+
+      if (absAccel > maxAbsAccel && absDeltaV_Kmh >= CONFIG.minDeltaVKmh) {
+        maxAbsAccel = absAccel;
+        const isAccel = acceleration > 0;
+        const severity = getSeverity(absAccel, isAccel);
+
+        if (severity !== 'Normal') {
+          bestEvent = {
+            id: `${isAccel ? 'accel' : 'brake'}_${p2.id}`, 
+            serverTime: p2.fixTime, 
+            type: isAccel ? 'harshAcceleration' : 'harshBraking',
+            severity, 
+            speed1: p1.speedKmh, 
+            speed2: p2.speedKmh, 
+            deltaT, 
+            acceleration: absAccel, 
+            ignition: p2.attributes?.ignition, 
+            latitude: p2.latitude, 
+            longitude: p2.longitude
+          };
+        }
+      }
+    }
+    if (bestEvent) {
+      calculatedEvents.push(bestEvent);
+      skipAnalysisUntil = new Date(bestEvent.serverTime).getTime(); 
+    }
+  }
+  return calculatedEvents;
+};
+
 export default function Reports({ devices, token }) {
   // Lógica de Bloqueo para Dispositivos Móviles (Responsive)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -28,12 +109,12 @@ export default function Reports({ devices, token }) {
   const [stopsData, setStopsData] = useState([]);
   
   const [isFetching, setIsFetching] = useState(false);
-  const [progressMsg, setProgressMsg] = useState(''); 
+  const [progressMsg, setProgressMsg] = useState(''); // Indicador de progreso en vivo
 
   // ESTADO: Controla la ventana flotante del mapa
   const [mapModal, setMapModal] = useState({ isOpen: false, lat: 0, lng: 0 });
 
-  // Traductor Inverso de Coordenadas a Direcciones Reales (Protegido contra SPAM)
+  // Traductor Inverso de Coordenadas a Direcciones Reales
   const reverseGeocodeFallback = async (lat, lon) => {
     if (!lat || !lon) return 'Coordenadas inválidas';
     
@@ -41,8 +122,7 @@ export default function Reports({ devices, token }) {
     if (geoCache[cacheKey]) return geoCache[cacheKey];
 
     try {
-      // Retraso de 500ms obligatorio para respetar los límites de la API gratuita (Max 2 req/seg)
-      await new Promise(resolve => setTimeout(resolve, 500)); 
+      await new Promise(resolve => setTimeout(resolve, 500)); // Retraso de 500ms para evitar bloqueo por Spam
       const res = await fetch(`https://us1.locationiq.com/v1/reverse.php?key=${LOCATION_IQ_KEY}&lat=${lat}&lon=${lon}&format=json&accept-language=es`);
       
       if (res.ok) {
@@ -133,7 +213,7 @@ export default function Reports({ devices, token }) {
             // AGRUPADOR INTELIGENTE POR DÍA 
             const grouped = {};
             rawSummary.forEach(day => {
-                if (day.distance < 10 && day.engineHours === 0) return; // Filtrar basura satelital
+                if (day.distance < 10 && day.engineHours === 0) return; 
                 
                 const localDateStr = getLocalDateStr(day.startTime);
 
@@ -175,9 +255,9 @@ export default function Reports({ devices, token }) {
             
             setEventsData(events);
             
-            // Traducción Secuencial (Protección Anti-Crash)
+            // Traducción Secuencial 
             const translateEvents = async () => {
-                const limit = Math.min(events.length, 100); // Límite de seguridad
+                const limit = Math.min(events.length, 100); 
                 for (let i = 0; i < limit; i++) {
                     const ev = events[i];
                     const finalAddress = await reverseGeocodeFallback(ev.latitude, ev.longitude);
@@ -247,10 +327,11 @@ export default function Reports({ devices, token }) {
             const rawRoute = await resRoute.json();
 
             const grouped = {};
+            
+            // 1. Iniciamos creando los días según el resumen
             rawSummary.forEach(day => {
                 if (day.distance < 10 && day.engineHours === 0) return;
                 const localDateStr = getLocalDateStr(day.startTime);
-                
                 if (!grouped[localDateStr]) {
                     grouped[localDateStr] = { 
                         dateStr: localDateStr, distanceKm: day.distance / 1000,
@@ -261,29 +342,44 @@ export default function Reports({ devices, token }) {
                 }
             });
 
+            // 2. Extraemos Excesos de velocidad
             let isOver = false;
-            for (let i = 1; i < rawRoute.length; i++) {
-                const p1 = rawRoute[i-1];
-                const p2 = rawRoute[i];
-                const speed1 = p1.speed * 1.852;
-                const speed2 = p2.speed * 1.852;
-                const deltaT = (new Date(p2.fixTime).getTime() - new Date(p1.fixTime).getTime()) / 1000;
-                
-                const localDateStr = getLocalDateStr(p2.fixTime);
+            rawRoute.forEach(pos => {
+                const speedKmh = pos.speed * 1.852;
+                const localDateStr = getLocalDateStr(pos.fixTime);
 
-                if (!grouped[localDateStr]) continue;
+                // 🔥 PROTECCIÓN: Si el día no existe en el resumen, lo creamos forzadamente
+                if (!grouped[localDateStr]) {
+                     grouped[localDateStr] = { dateStr: localDateStr, distanceKm: 0, overspeeds: 0, harshAccels: 0, harshBrakes: 0 };
+                }
 
-                if (speed2 > speedLimit) {
+                if (speedKmh > speedLimit) {
                     if (!isOver) { grouped[localDateStr].overspeeds++; isOver = true; }
                 } else { isOver = false; }
+            });
 
-                if (deltaT > 0 && deltaT <= 10 && speed2 > 10) {
-                    const acc = ((speed2 - speed1) / 3.6) / deltaT;
-                    if (acc > 2.5) grouped[localDateStr].harshAccels++;
-                    if (acc < -3.0) grouped[localDateStr].harshBrakes++;
+            // 3. Extraemos Aceleraciones y Frenadas usando el mismo motor cinemático avanzado
+            const harshEvents = calculateHarshEvents(rawRoute);
+            harshEvents.forEach(ev => {
+                const localDateStr = getLocalDateStr(ev.serverTime);
+                
+                // 🔥 PROTECCIÓN ADICIONAL: Por si acaso
+                if (!grouped[localDateStr]) {
+                     grouped[localDateStr] = { dateStr: localDateStr, distanceKm: 0, overspeeds: 0, harshAccels: 0, harshBrakes: 0 };
                 }
-            }
-            setSummaryData(Object.values(grouped));
+                
+                if (ev.type === 'harshAcceleration') grouped[localDateStr].harshAccels++;
+                if (ev.type === 'harshBraking') grouped[localDateStr].harshBrakes++;
+            });
+
+            // 4. Ordenamos por fecha cronológica para que no salgan revueltos
+            const finalData = Object.values(grouped).sort((a,b) => {
+                const [d1, m1, y1] = a.dateStr.split('/');
+                const [d2, m2, y2] = b.dateStr.split('/');
+                return new Date(y1, m1-1, d1) - new Date(y2, m2-1, d2);
+            });
+
+            setSummaryData(finalData);
         }
       }
       else if (reportType === 'fleet_behavior') {
@@ -309,22 +405,22 @@ export default function Reports({ devices, token }) {
                     const resRoute = await fetch(`${BASE_URL}/api/reports/route?${params}`, { headers });
                     if (resRoute.ok) {
                         const rawRoute = await resRoute.json();
+                        
+                        // 1. Conteo de Excesos
                         let isOver = false;
-                        for (let j = 1; j < rawRoute.length; j++) {
-                            const speed1 = rawRoute[j-1].speed * 1.852;
-                            const speed2 = rawRoute[j].speed * 1.852;
-                            const deltaT = (new Date(rawRoute[j].fixTime).getTime() - new Date(rawRoute[j-1].fixTime).getTime()) / 1000;
-
-                            if (speed2 > speedLimit) {
+                        rawRoute.forEach(pos => {
+                            const speedKmh = pos.speed * 1.852;
+                            if (speedKmh > speedLimit) {
                                 if (!isOver) { overspeeds++; isOver = true; }
                             } else { isOver = false; }
+                        });
 
-                            if (deltaT > 0 && deltaT <= 10 && speed2 > 10) {
-                                const acc = ((speed2 - speed1) / 3.6) / deltaT;
-                                if (acc > 2.5) harshAccels++;
-                                if (acc < -3.0) harshBrakes++;
-                            }
-                        }
+                        // 2. Conteo de Aceleración y Frenada (Motor Avanzado)
+                        const harshEvents = calculateHarshEvents(rawRoute);
+                        harshEvents.forEach(ev => {
+                            if (ev.type === 'harshAcceleration') harshAccels++;
+                            if (ev.type === 'harshBraking') harshBrakes++;
+                        });
                     }
                 } catch(e) { console.warn("Fallo auditoría en:", device.name); }
 
@@ -343,73 +439,9 @@ export default function Reports({ devices, token }) {
         const res = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
         if (res.ok) {
             const rawRoute = await res.json();
-            const calculatedEvents = [];
-
-            const getSeverity = (accel, isAcceleration) => {
-              const t = isAcceleration ? { mod: 1.5, harsh: 2.5, extreme: 3.5 } : { mod: 2.0, harsh: 3.0, extreme: 4.5 };
-              if (accel >= t.extreme) return 'Muy Brusco';
-              if (accel >= t.harsh) return 'Brusco';
-              if (accel >= t.mod) return 'Moderado';
-              return 'Normal';
-            };
-
-            const smoothedRoute = [];
-            for (let i = 0; i < rawRoute.length; i++) {
-              let sumKnots = 0; let count = 0;
-              for (let j = Math.max(0, i - 1); j <= Math.min(rawRoute.length - 1, i + 1); j++) {
-                sumKnots += rawRoute[j].speed; count++;
-              }
-              const speedKmh = (sumKnots / count) * 1.852;
-              smoothedRoute.push({ ...rawRoute[i], speedKmh, speedMs: speedKmh / 3.6, timeMs: new Date(rawRoute[i].fixTime).getTime() });
-            }
-
-            let skipAnalysisUntil = 0;
-            for (let i = 0; i < smoothedRoute.length - 1; i++) {
-              const p1 = smoothedRoute[i];
-              if (p1.timeMs < skipAnalysisUntil || p1.speedKmh < 15) continue;
-
-              let maxAbsAccel = 0; let bestEvent = null;
-
-              for (let j = i + 1; j < smoothedRoute.length; j++) {
-                const p2 = smoothedRoute[j];
-                const deltaT = (p2.timeMs - p1.timeMs) / 1000; 
-                if (deltaT > 5) break;
-                if (deltaT < 1) continue;
-
-                const absDeltaV_Kmh = Math.abs(p2.speedKmh - p1.speedKmh);
-                const acceleration = (p2.speedMs - p1.speedMs) / deltaT;
-                const absAccel = Math.abs(acceleration);
-
-                if (absAccel > 9.8) continue; 
-
-                if (absAccel > maxAbsAccel && absDeltaV_Kmh >= 15) {
-                  maxAbsAccel = absAccel;
-                  const isAccel = acceleration > 0;
-                  const severity = getSeverity(absAccel, isAccel);
-
-                  if (severity !== 'Normal') {
-                    bestEvent = {
-                      id: `${isAccel ? 'accel' : 'brake'}_${p2.id}`, 
-                      serverTime: p2.fixTime, 
-                      type: isAccel ? 'harshAcceleration' : 'harshBraking',
-                      severity, 
-                      speed1: p1.speedKmh, 
-                      speed2: p2.speedKmh, 
-                      deltaT, 
-                      acceleration: absAccel, 
-                      ignition: p2.attributes?.ignition, 
-                      latitude: p2.latitude, 
-                      longitude: p2.longitude
-                    };
-                  }
-                }
-              }
-              if (bestEvent) {
-                calculatedEvents.push(bestEvent);
-                skipAnalysisUntil = new Date(bestEvent.serverTime).getTime(); 
-              }
-            }
             
+            // Usamos el cerebro centralizado
+            const calculatedEvents = calculateHarshEvents(rawRoute);
             setEventsData(calculatedEvents);
             
             const translateEvents = async () => {
@@ -444,7 +476,6 @@ export default function Reports({ devices, token }) {
                         const finalAddress = await reverseGeocodeFallback(stop.latitude, stop.longitude);
                         setStopsData(prev => {
                             const updated = [...prev];
-                            // Usamos el índice original para asegurar que actualizamos el correcto
                             if (updated[i]) {
                                 updated[i] = { ...updated[i], address: finalAddress };
                             }
@@ -474,7 +505,7 @@ export default function Reports({ devices, token }) {
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
 
-    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO ";
+    if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO (CRUDO TRACCAR)";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
     else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; 
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
@@ -652,7 +683,7 @@ export default function Reports({ devices, token }) {
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <optgroup label="Uso y Tiempos">
-                    <option value="daily">Resumen Diario </option>
+                    <option value="daily">Resumen Diario (Crudo)</option>
                     <option value="idle">Tiempo en Ralentí</option>
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                 </optgroup>
@@ -1073,4 +1104,4 @@ const styles = {
   modalContent: { backgroundColor: '#1F2937', padding: '20px', borderRadius: '12px', width: '90%', maxWidth: '600px', border: '1px solid #374151', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
   closeBtn: { backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '4px', padding: '5px 12px', cursor: 'pointer', fontWeight: 'bold' }
-};
+};  
