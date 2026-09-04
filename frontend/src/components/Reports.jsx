@@ -88,6 +88,89 @@ const calculateHarshEvents = (rawRoute) => {
   return calculatedEvents;
 };
 
+// 🔥 NUEVO CEREBRO: ANALIZADOR DE FATIGA Y TIEMPOS DE CONDUCCIÓN
+const calculateDrivingHours = (routeData, deviceName) => {
+  const routeByDay = {};
+  const getLocalDateStr = (isoString) => {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+  };
+
+  routeData.forEach(pos => {
+    const dateStr = getLocalDateStr(pos.fixTime);
+    if (!routeByDay[dateStr]) routeByDay[dateStr] = [];
+    routeByDay[dateStr].push(pos);
+  });
+
+  const results = [];
+
+  Object.keys(routeByDay).forEach(dateStr => {
+    const dayRoute = routeByDay[dateStr];
+    let startTime = null;
+    let endTime = null;
+    let totalDrivingMs = 0;
+    let maxConsecutiveMs = 0;
+
+    let currentSegmentStart = null;
+    let lastMovingTime = null;
+
+    dayRoute.forEach(pos => {
+      const speedKmh = pos.speed * 1.852;
+      const timeMs = new Date(pos.fixTime).getTime();
+
+      if (speedKmh > 2) {
+        if (!startTime) startTime = pos.fixTime;
+        endTime = pos.fixTime;
+
+        if (!currentSegmentStart) {
+          currentSegmentStart = timeMs;
+          lastMovingTime = timeMs;
+        } else {
+          const gap = timeMs - lastMovingTime;
+          // Criterio de seguridad: si el carro para más de 10 minutos (600,000 ms), rompe las horas seguidas
+          if (gap > 600000) { 
+            const duration = lastMovingTime - currentSegmentStart;
+            totalDrivingMs += duration;
+            if (duration > maxConsecutiveMs) maxConsecutiveMs = duration;
+            currentSegmentStart = timeMs;
+          }
+          lastMovingTime = timeMs;
+        }
+      } else {
+        if (currentSegmentStart) {
+          const gap = timeMs - lastMovingTime;
+          if (gap > 600000) { 
+            const duration = lastMovingTime - currentSegmentStart;
+            totalDrivingMs += duration;
+            if (duration > maxConsecutiveMs) maxConsecutiveMs = duration;
+            currentSegmentStart = null;
+          }
+        }
+      }
+    });
+
+    if (currentSegmentStart && lastMovingTime) {
+      const duration = lastMovingTime - currentSegmentStart;
+      totalDrivingMs += duration;
+      if (duration > maxConsecutiveMs) maxConsecutiveMs = duration;
+    }
+
+    if (totalDrivingMs > 0) {
+      results.push({
+        deviceName,
+        dateStr,
+        startTime,
+        endTime,
+        totalDrivingMs,
+        maxConsecutiveMs
+      });
+    }
+  });
+
+  return results;
+};
+
 export default function Reports({ devices, token }) {
   // Lógica de Bloqueo para Dispositivos Móviles (Responsive)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -107,6 +190,7 @@ export default function Reports({ devices, token }) {
   const [routeData, setRouteData] = useState([]);
   const [eventsData, setEventsData] = useState([]);
   const [stopsData, setStopsData] = useState([]);
+  const [engineData, setEngineData] = useState([]); // 🔥 NUEVO: Estado para ciclos de motor
   
   const [isFetching, setIsFetching] = useState(false);
   const [progressMsg, setProgressMsg] = useState(''); // Indicador de progreso en vivo
@@ -196,8 +280,9 @@ export default function Reports({ devices, token }) {
     e.preventDefault();
     setIsFetching(true);
     setProgressMsg(''); 
+
+    setSummaryData([]); setRouteData([]); setEventsData([]); setStopsData([]); setEngineData([]);
     
-    setSummaryData([]); setRouteData([]); setEventsData([]); setStopsData([]);
 
     const fromISO = encodeURIComponent(new Date(reportConfig.from).toISOString());
     const toISO = encodeURIComponent(new Date(reportConfig.to).toISOString());
@@ -487,6 +572,55 @@ export default function Reports({ devices, token }) {
             translateStops();
         }
       }
+      // 🔥 NUEVOS REPORTES DE FATIGA Y CONDUCCIÓN (INDIVIDUAL Y FLOTA)
+      else if (reportType === 'driving_hours') {
+        setProgressMsg('Analizando telemetría y calculando tiempos de conducción...');
+        const resRoute = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
+
+        if (resRoute.ok) {
+            const rawRoute = await resRoute.json();
+            const deviceName = devices.find(d => String(d.id) === String(reportConfig.deviceId))?.name || 'Vehículo';
+            const analyzedData = calculateDrivingHours(rawRoute, deviceName);
+            setSummaryData(analyzedData);
+        }
+      }
+      else if (reportType === 'fleet_driving_hours') {
+        const totalVehicles = devices.length;
+        const chunkSize = 2; 
+        const fleetStats = [];
+
+        for (let i = 0; i < totalVehicles; i += chunkSize) {
+            const chunk = devices.slice(i, i + chunkSize);
+            setProgressMsg(`Calculando horas de conducción: ${Math.min(i + chunkSize, totalVehicles)} de ${totalVehicles}...`);
+
+            const promises = chunk.map(async (device) => {
+                const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
+                try {
+                    const resRoute = await fetch(`${BASE_URL}/api/reports/route?${params}`, { headers });
+                    if (resRoute.ok) {
+                        const rawRoute = await resRoute.json();
+                        return calculateDrivingHours(rawRoute, device.name);
+                    }
+                } catch(e) { console.warn("Fallo auditoría en:", device.name); }
+                return [];
+            });
+
+            const chunkResults = await Promise.all(promises);
+            fleetStats.push(...chunkResults.flat());
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        // Ordenar por vehículo y luego por fecha
+        fleetStats.sort((a, b) => {
+            if (a.deviceName < b.deviceName) return -1;
+            if (a.deviceName > b.deviceName) return 1;
+            const [d1, m1, y1] = a.dateStr.split('/');
+            const [d2, m2, y2] = b.dateStr.split('/');
+            return new Date(y1, m1-1, d1) - new Date(y2, m2-1, d2);
+        });
+
+        setSummaryData(fleetStats);
+      }
     } catch (err) { 
         console.error(err);
         alert("Hubo un problema de conexión al extraer la información.");
@@ -499,7 +633,7 @@ export default function Reports({ devices, token }) {
     if (isFetching) return alert("Por favor espera a que termine de cargar el informe para exportarlo.");
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
-    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior');
+    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours');
     const placaVehiculo = isFleetReport ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
     let filename = `Reporte_${reportType}_${new Date().getTime()}.xls`;
@@ -515,6 +649,9 @@ export default function Reports({ devices, token }) {
     else if (reportType === 'stops') nombreReporteMayus = "INFORME DE VEHÍCULOS DETENIDOS (PARADAS)";
     else if (reportType === 'behavior') nombreReporteMayus = "HÁBITOS DE CONDUCCIÓN (INDIVIDUAL DIARIO)";
     else if (reportType === 'fleet_behavior') nombreReporteMayus = "RANKING DE CONDUCCIÓN (TODA LA FLOTA)";
+    // Títulos nuevos
+    else if (reportType === 'driving_hours') nombreReporteMayus = "HORAS DE CONDUCCIÓN NETAS Y FATIGA (INDIVIDUAL)";
+    else if (reportType === 'fleet_driving_hours') nombreReporteMayus = "HORAS DE CONDUCCIÓN NETAS Y FATIGA (FLOTA)";
 
     let htmlTemplate = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -626,6 +763,17 @@ export default function Reports({ devices, token }) {
         htmlTemplate += `<tr><td>${start}</td><td>${end}</td><td>${formatDuration(stop.duration)}</td><td>${engine}</td><td>${address}</td></tr>`;
       });
     }
+    // Exportación nuevos reportes
+    else if (reportType === 'driving_hours' || reportType === 'fleet_driving_hours') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `<tr>${reportType === 'fleet_driving_hours' ? '<th><b>VEHÍCULO</b></th>' : ''}<th><b>FECHA</b></th><th><b>HORA INICIO (1er Mov)</b></th><th><b>HORA FIN (Último Mov)</b></th><th><b>CONDUCCIÓN SEGUIDA MÁXIMA</b></th><th><b>TOTAL CONDUCCIÓN DÍA</b></th><th><b>ALERTA SEG. VIAL</b></th></tr>`;
+      summaryData.forEach(day => {
+        const maxConsecutiveHours = day.maxConsecutiveMs / 3600000;
+        const isFatigued = maxConsecutiveHours > 4; // Umbral de alerta: 4 horas continuas
+        const fatigaStatus = isFatigued ? '⚠️ Riesgo de Fatiga (>4h)' : '✅ Descanso Óptimo';
+        htmlTemplate += `<tr>${reportType === 'fleet_driving_hours' ? `<td>${day.deviceName}</td>` : ''}<td>${day.dateStr}</td><td>${new Date(day.startTime).toLocaleTimeString()}</td><td>${new Date(day.endTime).toLocaleTimeString()}</td><td>${formatDuration(day.maxConsecutiveMs)}</td><td>${formatDuration(day.totalDrivingMs)}</td><td>${fatigaStatus}</td></tr>`;
+      });
+    }
 
     htmlTemplate += `</table></body></html>`;
     const blob = new Blob([htmlTemplate], { type: 'application/vnd.ms-excel;charset=utf-8;' });
@@ -652,7 +800,8 @@ export default function Reports({ devices, token }) {
     );
   }
 
-  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior');
+  // 🔥 ACTUALIZADO PARA BLOQUEAR EL VEHÍCULO EN EL MODO FLOTA
+  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours');
 
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
@@ -688,6 +837,9 @@ export default function Reports({ devices, token }) {
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                 </optgroup>
                 <optgroup label="Seguridad y Auditoría">
+                    {/* 🔥 DOS NUEVAS OPCIONES INTEGRADAS AQUÍ */}
+                    <option value="driving_hours">Horas de Conducción Netas (Individual)</option>
+                    <option value="fleet_driving_hours">Horas de Conducción Netas (Flota)</option>
                     <option value="behavior">Hábitos de Conducción (Individual Diario)</option>
                     <option value="fleet_behavior">Ranking de Conducción (Toda la Flota)</option>
                     <option value="speed">Exceso de Velocidad (Individual Punto a Punto)</option>
@@ -745,6 +897,61 @@ export default function Reports({ devices, token }) {
 
       <div style={styles.tableContainer}>
         
+        {/* 🔥 NUEVO RENDERIZADO: HORAS DE CONDUCCIÓN */}
+        {(reportType === 'driving_hours' || reportType === 'fleet_driving_hours') && (
+          <>
+            <h3 style={styles.tableTitle}>
+              {reportType === 'driving_hours' 
+                 ? `Horas de Conducción y Fatiga (${summaryData.length} días)`
+                 : `Horas de Conducción por Flota (${summaryData.length} registros)`}
+            </h3>
+            <div style={{maxHeight: '500px', overflowY: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        {reportType === 'fleet_driving_hours' && <th>Vehículo</th>}
+                        <th>Fecha</th>
+                        <th>Hora Inicio (1er Mov)</th>
+                        <th>Hora Fin (Último Mov)</th>
+                        <th>Conducción Seguidas (Máxima)</th>
+                        <th>Total Horas al Día</th>
+                        <th>Seguridad Vial</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {summaryData.length === 0 ? <tr><td colSpan={reportType === 'fleet_driving_hours' ? 7 : 6} style={styles.emptyText}>No hay datos de movimiento en este rango.</td></tr> :
+                  summaryData.map((day, index) => {
+                      const maxConsecutiveHours = day.maxConsecutiveMs / 3600000;
+                      // Condición de seguridad vial: alerta sugerida si manejan más de 4 horas seguidas
+                      const isFatigued = maxConsecutiveHours > 4; 
+                      
+                      return (
+                          <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
+                            {reportType === 'fleet_driving_hours' && (
+                               <td style={{...styles.td, fontWeight: 'bold', color: '#3B82F6'}}>{day.deviceName}</td>
+                            )}
+                            <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>{day.dateStr}</td>
+                            <td style={{...styles.td, color: '#9CA3AF'}}>{new Date(day.startTime).toLocaleTimeString()}</td>
+                            <td style={{...styles.td, color: '#9CA3AF'}}>{new Date(day.endTime).toLocaleTimeString()}</td>
+                            
+                            <td style={{...styles.td, color: isFatigued ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>
+                                {formatDuration(day.maxConsecutiveMs)}
+                            </td>
+                            <td style={{...styles.td, color: '#3B82F6', fontWeight: 'bold'}}>
+                                {formatDuration(day.totalDrivingMs)}
+                            </td>
+                            <td style={{...styles.td, color: isFatigued ? '#EF4444' : '#9CA3AF', fontSize: '12px'}}>
+                                {isFatigued ? '⚠️ Riesgo de Fatiga (>4h continuas)' : '✅ Descanso Óptimo'}
+                            </td>
+                          </tr>
+                      );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         {reportType === 'behavior' && (
           <>
             <h3 style={styles.tableTitle}>Hábitos de Conducción (Desglose Diario) ({summaryData.length} días)</h3>
@@ -1104,4 +1311,4 @@ const styles = {
   modalContent: { backgroundColor: '#1F2937', padding: '20px', borderRadius: '12px', width: '90%', maxWidth: '600px', border: '1px solid #374151', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
   closeBtn: { backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '4px', padding: '5px 12px', cursor: 'pointer', fontWeight: 'bold' }
-};  
+};
