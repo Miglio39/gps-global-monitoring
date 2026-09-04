@@ -60,6 +60,21 @@ export default function LiveDashboard({ devices, positions }) {
   const [speedLimit, setSpeedLimit] = useState(80); // Límite de velocidad modificable
   const prevPositionsRef = useRef({});
 
+  // 🔕 NUEVO: Estado para silenciar alarmas (Persiste en localStorage)
+  const [isMuted, setIsMuted] = useState(() => localStorage.getItem('alerts_muted') === 'true');
+  const isMutedRef = useRef(isMuted);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  const handleToggleMute = (e) => {
+    e.stopPropagation();
+    const newVal = !isMuted;
+    setIsMuted(newVal);
+    localStorage.setItem('alerts_muted', newVal.toString());
+  };
+
   // === CONFIGURACIÓN DE MAPAS ===
   const [mapStyle, setMapStyle] = useState('streets'); 
   const [showLayerMenu, setShowLayerMenu] = useState(false); 
@@ -123,7 +138,7 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-  // === 🚀 MOTOR DE NOTIFICACIONES CON SONIDO ===
+  // === 🚀 MOTOR DE NOTIFICACIONES CON SONIDO Y MUTE ===
   useEffect(() => {
     const newNotifs = [];
     const now = new Date();
@@ -166,13 +181,15 @@ export default function LiveDashboard({ devices, positions }) {
     if (newNotifs.length > 0) {
       setNotifications(prev => [...newNotifs, ...prev].slice(0, 50));
       
-      // 🔊 REPRODUCIR SONIDO DE ALARMA
-      try {
-        const audio = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
-        audio.volume = 0.4; // Ajustamos al 40% para que no aturda
-        audio.play().catch(err => console.warn("El navegador bloqueó el sonido. Haz clic en el mapa una vez para habilitarlo."));
-      } catch (err) {
-        console.error("Error al intentar reproducir la alarma", err);
+      // 🔊 REPRODUCIR SONIDO SOLO SI NO ESTÁ SILENCIADO
+      if (!isMutedRef.current) {
+        try {
+          const audio = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
+          audio.volume = 0.4; // Ajustamos al 40% para que no aturda
+          audio.play().catch(err => console.warn("El navegador bloqueó el sonido. Haz clic en el mapa una vez para habilitarlo."));
+        } catch (err) {
+          console.error("Error al intentar reproducir la alarma", err);
+        }
       }
     }
   }, [positions, devices, speedLimit]);
@@ -349,7 +366,7 @@ export default function LiveDashboard({ devices, positions }) {
                 position: 'relative', transition: 'all 0.2s'
               }}
             >
-              <span style={{ fontSize: '16px' }}>🔔</span>
+              <span style={{ fontSize: '16px' }}>{isMuted ? '🔕' : '🔔'}</span>
               {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute', top: '-6px', right: '-6px', backgroundColor: '#EF4444',
@@ -369,8 +386,19 @@ export default function LiveDashboard({ devices, positions }) {
                 boxShadow: '0 10px 25px rgba(0,0,0,0.8)', overflowY: 'auto', display: 'flex', flexDirection: 'column'
               }}>
                 <div style={{ padding: '12px 15px', borderBottom: '1px solid #1F2937', display: 'flex', flexDirection: 'column', gap: '10px', position: 'sticky', top: 0, backgroundColor: '#111827', zIndex: 10 }}>
+                  
+                  {/* HEADER NOTIFICACIONES + BOTON MUTE */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h4 style={{ margin: 0, color: 'white', fontSize: '14px' }}>Centro de Alertas</h4>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h4 style={{ margin: 0, color: 'white', fontSize: '14px' }}>Centro de Alertas</h4>
+                      <button 
+                        onClick={handleToggleMute} 
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: 0 }}
+                        title={isMuted ? "Sonido Desactivado - Clic para Activar" : "Sonido Activado - Clic para Silenciar"}
+                      >
+                        {isMuted ? '🔕' : '🔊'}
+                      </button>
+                    </div>
                     {notifications.length > 0 && (
                       <button onClick={() => setNotifications([])} style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>
                         Limpiar todo
