@@ -57,10 +57,13 @@ export default function LiveDashboard({ devices, positions }) {
   // === ESTADOS PARA EL CENTRO DE NOTIFICACIONES ===
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [speedLimit, setSpeedLimit] = useState(80); // Límite de velocidad modificable
+  const [speedLimit, setSpeedLimit] = useState(80); 
+  const [notificationFilter, setNotificationFilter] = useState('ALL'); // 🔥 NUEVO: Filtro visual de alertas
+  
   const prevPositionsRef = useRef({});
+  const idleStartTimesRef = useRef({}); 
+  const idleAlertSentRef = useRef({});  
 
-  // 🔕 NUEVO: Estado para silenciar alarmas (Persiste en localStorage)
   const [isMuted, setIsMuted] = useState(() => localStorage.getItem('alerts_muted') === 'true');
   const isMutedRef = useRef(isMuted);
 
@@ -138,7 +141,7 @@ export default function LiveDashboard({ devices, positions }) {
     }
   }, [positions, hasInitialCentered, map]);
 
-  // === 🚀 MOTOR DE NOTIFICACIONES CON SONIDO Y MUTE ===
+  // === 🚀 MOTOR DE NOTIFICACIONES ===
   useEffect(() => {
     const newNotifs = [];
     const now = new Date();
@@ -160,18 +163,32 @@ export default function LiveDashboard({ devices, positions }) {
         const finalIgnition = isMoving ? true : (rawIgnition !== undefined ? rawIgnition : false);
         const prevFinalIgnition = prevMoving ? true : (prevRawIgnition !== undefined ? prevRawIgnition : false);
 
-        // Alerta: Motor se ENCENDIÓ
         if (!prevFinalIgnition && finalIgnition) {
           newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'IGNITION_ON', time: now, read: false });
         }
-        // Alerta: Motor se APAGÓ
         else if (prevFinalIgnition && !finalIgnition) {
           newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'IGNITION_OFF', time: now, read: false });
         }
 
-        // Alerta: Exceso de velocidad (Usando el Límite Configurable)
         if (speedKmh > speedLimit && prevSpeedKmh <= speedLimit) {
           newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'OVERSPEED', speed: speedKmh, time: now, read: false });
+        }
+
+        const isIdling = !isMoving && finalIgnition; 
+        if (isIdling) {
+          if (!idleStartTimesRef.current[device.id]) {
+            idleStartTimesRef.current[device.id] = now.getTime();
+            idleAlertSentRef.current[device.id] = false;
+          } else {
+            const idleDurationMs = now.getTime() - idleStartTimesRef.current[device.id];
+            if (idleDurationMs >= 900000 && !idleAlertSentRef.current[device.id]) {
+              newNotifs.push({ id: Date.now() + Math.random(), deviceId: device.id, deviceName: device.name, type: 'IDLE_15MIN', time: now, read: false });
+              idleAlertSentRef.current[device.id] = true; 
+            }
+          }
+        } else {
+          delete idleStartTimesRef.current[device.id];
+          delete idleAlertSentRef.current[device.id];
         }
       }
 
@@ -181,15 +198,12 @@ export default function LiveDashboard({ devices, positions }) {
     if (newNotifs.length > 0) {
       setNotifications(prev => [...newNotifs, ...prev].slice(0, 50));
       
-      // 🔊 REPRODUCIR SONIDO SOLO SI NO ESTÁ SILENCIADO
       if (!isMutedRef.current) {
         try {
           const audio = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg');
-          audio.volume = 0.4; // Ajustamos al 40% para que no aturda
-          audio.play().catch(err => console.warn("El navegador bloqueó el sonido. Haz clic en el mapa una vez para habilitarlo."));
-        } catch (err) {
-          console.error("Error al intentar reproducir la alarma", err);
-        }
+          audio.volume = 0.4;
+          audio.play().catch(() => {});
+        } catch (err) {}
       }
     }
   }, [positions, devices, speedLimit]);
@@ -317,6 +331,11 @@ export default function LiveDashboard({ devices, positions }) {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  // 🔥 LÓGICA DE FILTRADO PARA LA CAMPANITA
+  const visibleNotifications = notifications.filter(n => 
+    notificationFilter === 'ALL' || n.type === notificationFilter
+  );
+
   return (
     <main style={{ position: 'relative', flex: 1, overflow: 'hidden' }} onClick={() => { setShowNotifications(false); setShowLayerMenu(false); }}>
       
@@ -406,26 +425,44 @@ export default function LiveDashboard({ devices, positions }) {
                     )}
                   </div>
                   
-                  {/* CONTROL DE VELOCIDAD */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <span style={{ fontSize: '11px', color: '#9CA3AF', fontWeight: 'bold' }}>Límite Exceso (km/h):</span>
-                    <input 
-                      type="number" 
-                      value={speedLimit} 
-                      onChange={(e) => setSpeedLimit(Number(e.target.value) || 0)}
-                      style={{ width: '60px', backgroundColor: '#1F2937', border: '1px solid #4B5563', color: '#EF4444', borderRadius: '4px', padding: '4px', textAlign: 'center', fontWeight: 'bold', fontSize: '12px', outline: 'none' }}
-                    />
+                  {/* FILTRO Y CONTROL DE VELOCIDAD */}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <select 
+                      value={notificationFilter} 
+                      onChange={(e) => setNotificationFilter(e.target.value)}
+                      style={{ flex: 1, backgroundColor: '#1F2937', border: '1px solid #4B5563', color: 'white', borderRadius: '4px', padding: '4px', fontSize: '11px', outline: 'none', cursor: 'pointer' }}
+                    >
+                      <option value="ALL">👁️ Todas las Alertas</option>
+                      <option value="OVERSPEED">🚨 Exceso Vel</option>
+                      <option value="IDLE_15MIN">⏱️ Ralentí</option>
+                      <option value="IGNITION_ON">🟢 Motor ON</option>
+                      <option value="IGNITION_OFF">🔴 Motor OFF</option>
+                    </select>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ fontSize: '10px', color: '#9CA3AF', fontWeight: 'bold' }}>Límite:</span>
+                      <input 
+                        type="number" 
+                        value={speedLimit} 
+                        onChange={(e) => setSpeedLimit(Number(e.target.value) || 0)}
+                        style={{ width: '45px', backgroundColor: '#1F2937', border: '1px solid #4B5563', color: '#EF4444', borderRadius: '4px', padding: '4px', textAlign: 'center', fontWeight: 'bold', fontSize: '11px', outline: 'none' }}
+                      />
+                    </div>
                   </div>
                 </div>
 
                 <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {notifications.length === 0 ? (
-                    <p style={{ margin: 0, color: '#6B7280', fontSize: '12px', textAlign: 'center', padding: '30px 0' }}>No hay alertas recientes.</p>
+                  {visibleNotifications.length === 0 ? (
+                    <p style={{ margin: 0, color: '#6B7280', fontSize: '12px', textAlign: 'center', padding: '30px 0' }}>
+                      {notifications.length > 0 ? 'No hay alertas de este tipo.' : 'No hay alertas recientes.'}
+                    </p>
                   ) : (
-                    notifications.map(n => (
-                      <div key={n.id} style={{ display: 'flex', gap: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px', borderLeft: n.type === 'OVERSPEED' ? '3px solid #EF4444' : (n.type === 'IGNITION_ON' ? '3px solid #10B981' : '3px solid #6B7280') }}>
+                    visibleNotifications.map(n => (
+                      <div key={n.id} style={{ display: 'flex', gap: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px', 
+                        borderLeft: n.type === 'OVERSPEED' ? '3px solid #EF4444' : (n.type === 'IGNITION_ON' ? '3px solid #10B981' : (n.type === 'IDLE_15MIN' ? '3px solid #F59E0B' : '3px solid #6B7280')) 
+                      }}>
                         <div style={{ fontSize: '18px', display: 'flex', alignItems: 'center' }}>
-                          {n.type === 'OVERSPEED' ? '🚨' : (n.type === 'IGNITION_ON' ? '🟢' : '🔴')}
+                          {n.type === 'OVERSPEED' ? '🚨' : (n.type === 'IGNITION_ON' ? '🟢' : (n.type === 'IDLE_15MIN' ? '⏱️' : '🔴'))}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
                           <span style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>{n.deviceName}</span>
@@ -433,6 +470,7 @@ export default function LiveDashboard({ devices, positions }) {
                             {n.type === 'OVERSPEED' && `⚠️ Exceso de velocidad: ${n.speed.toFixed(1)} km/h`}
                             {n.type === 'IGNITION_ON' && '🔑 Motor Encendido'}
                             {n.type === 'IGNITION_OFF' && '🔑 Motor Apagado'}
+                            {n.type === 'IDLE_15MIN' && '⏱️ Ralentí prolongado (15 min)'}
                           </span>
                           <span style={{ color: '#6B7280', fontSize: '10px', marginTop: '6px', alignSelf: 'flex-end' }}>
                             {n.time.toLocaleTimeString()}
@@ -471,7 +509,6 @@ export default function LiveDashboard({ devices, positions }) {
               
               const ultimaConexion = device.lastUpdate ? new Date(device.lastUpdate).toLocaleString('es-CO') : 'Desconocida';
 
-              // === CONDUCTOR PARA GLOBO ===
               const assignedDriver = device.attributes?.driverId ? driverMap[device.attributes.driverId] : null;
 
               return (

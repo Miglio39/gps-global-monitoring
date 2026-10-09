@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 // Llaves y Caché de Geocodificación
 const LOCATION_IQ_KEY = 'pk.e0a46bceeed78c708e78aacfc0b2942c';
 const geoCache = {}; 
-
+  
 // EL DOMINIO DE TU SERVIDOR
 const BASE_URL = 'https://api.globalmonitorgps.com'; 
 
@@ -908,6 +908,8 @@ export default function Reports({ devices, token }) {
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Módulo de Informes Analíticos</h2>
       
+      
+
       <div style={styles.adminCard}>
         <form onSubmit={handleFetchData} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
           
@@ -928,7 +930,7 @@ export default function Reports({ devices, token }) {
                 {!isFleetReport && devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
-        
+
           <div style={{flex: 1, minWidth: '220px'}}>
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
