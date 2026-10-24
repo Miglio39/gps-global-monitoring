@@ -60,6 +60,10 @@ export default function LiveDashboard({ devices, positions }) {
   const [speedLimit, setSpeedLimit] = useState(80); 
   const [notificationFilter, setNotificationFilter] = useState('ALL'); // 🔥 NUEVO: Filtro visual de alertas
   
+  // === 🛣️ ESTADOS PARA KILOMETRAJE RECORRIDO EN EL DÍA ===
+  const [dailyDistances, setDailyDistances] = useState({});
+  const [loadingDistance, setLoadingDistance] = useState({});
+
   const prevPositionsRef = useRef({});
   const idleStartTimesRef = useRef({}); 
   const idleAlertSentRef = useRef({});  
@@ -97,6 +101,42 @@ export default function LiveDashboard({ devices, positions }) {
     if (device.disabled) return true; 
     if (device.expirationTime && new Date(device.expirationTime) < new Date()) return true; 
     return false;
+  };
+
+  // === 🛣️ FUNCIÓN PARA OBTENER EL KILOMETRAJE DEL DÍA ===
+  const fetchDailyDistance = async (deviceId) => {
+    if (!token || !deviceId) return;
+    setLoadingDistance(prev => ({ ...prev, [deviceId]: true }));
+
+    try {
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const fromISO = encodeURIComponent(startOfDay.toISOString());
+      const toISO = encodeURIComponent(now.toISOString());
+
+      const response = await fetch(
+        `${API_BASE}/api/reports/summary?deviceId=${deviceId}&from=${fromISO}&to=${toISO}`,
+        {
+          headers: {
+            'Authorization': `Basic ${token}`,
+            'Accept': 'application/json'
+          }
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const totalMeters = Array.isArray(data)
+          ? data.reduce((acc, item) => acc + (item.distance || 0), 0)
+          : 0;
+        const distanceKm = (totalMeters / 1000).toFixed(2);
+        setDailyDistances(prev => ({ ...prev, [deviceId]: distanceKm }));
+      }
+    } catch (error) {
+      console.error("Error obteniendo kilometraje del día:", error);
+    } finally {
+      setLoadingDistance(prev => ({ ...prev, [deviceId]: false }));
+    }
   };
 
   // Cargar Conductores
@@ -320,6 +360,9 @@ export default function LiveDashboard({ devices, positions }) {
 
   const handleDeviceClick = (device, pos) => {
     setSelectedDevice(device);
+    if (!checkIsSuspended(device)) {
+      fetchDailyDistance(device.id);
+    }
     if (pos && map) map.flyTo([pos.latitude, pos.longitude], 16, { animate: true, duration: 1.5 });
     if (isMobile) setIsListOpen(false);
   };
@@ -532,6 +575,16 @@ export default function LiveDashboard({ devices, positions }) {
                     <span style={{color: isSuspended ? '#EF4444' : '#666', fontSize:'11px', fontWeight: isSuspended ? 'bold' : 'normal'}}>Estado: {estadoStr}</span><br/>
                     <span style={{color:'#666', fontSize:'11px'}}>Últ. conexión: {ultimaConexion}</span><br/>
                     {hasIgnition && !isSuspended && (<span style={{color: finalIgnition ? '#10B981' : '#6B7280', fontSize:'11px'}}>🔑 Motor: {finalIgnition ? 'Encendido' : 'Apagado'}</span>)}<br/>
+                    
+                    {/* 🛣️ KILOMETRAJE RECORRIDO EN EL DÍA */}
+                    {!isSuspended && (
+                      <>
+                        <span style={{color:'#2563EB', fontSize:'11px', fontWeight: 'bold'}}>
+                          🛣️ Recorrido hoy: {loadingDistance[device.id] ? 'Calculando...' : `${dailyDistances[device.id] ?? '0.00'} km`}
+                        </span><br/>
+                      </>
+                    )}
+
                     {batteryInfo.text && !isSuspended && (<span style={{color: batteryInfo.color, fontSize:'11px', fontWeight: 'bold'}}>Batería: {batteryInfo.text}</span>)}
                     
                     <div style={{ marginTop: '10px' }}>
