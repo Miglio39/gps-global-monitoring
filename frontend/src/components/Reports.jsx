@@ -170,6 +170,124 @@ const calculateDrivingHours = (routeData, deviceName) => {
   return results;
 };
 
+// 🔥 CONSOLIDADOR PARA INFORME DE FACTURACIÓN
+const buildBillingData = (rawSummary, rawRoute, deviceName, currentSpeedLimit) => {
+  const getLocalDateStr = (isoString) => {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+  };
+
+  const realMaxSpeedByDay = {};
+  const timesByDay = {};
+
+  rawRoute.forEach(pos => {
+    const localDateStr = getLocalDateStr(pos.fixTime);
+    const speedKmh = pos.speed * 1.852;
+
+    // Escudo anti-aviones (Límite 160 km/h)
+    if (speedKmh <= 160) {
+      if (!realMaxSpeedByDay[localDateStr] || speedKmh > realMaxSpeedByDay[localDateStr]) {
+        realMaxSpeedByDay[localDateStr] = speedKmh;
+      }
+    }
+
+    // Registro de hora de inicio y hora de fin del día
+    const isMovingOrOn = pos.attributes?.ignition || speedKmh > 2;
+    if (!timesByDay[localDateStr]) {
+      timesByDay[localDateStr] = {
+        firstActive: null,
+        lastActive: null,
+        firstAny: pos.fixTime,
+        lastAny: pos.fixTime
+      };
+    } else {
+      timesByDay[localDateStr].lastAny = pos.fixTime;
+    }
+
+    if (isMovingOrOn) {
+      if (!timesByDay[localDateStr].firstActive) {
+        timesByDay[localDateStr].firstActive = pos.fixTime;
+      }
+      timesByDay[localDateStr].lastActive = pos.fixTime;
+    }
+  });
+
+  const grouped = {};
+
+  rawSummary.forEach(day => {
+    if (day.distance < 10 && day.engineHours === 0) return;
+
+    const localDateStr = getLocalDateStr(day.startTime);
+    const traccarFallback = day.maxSpeed ? (day.maxSpeed * 1.852) : 0;
+    let trueMaxSpeed = realMaxSpeedByDay[localDateStr] || traccarFallback;
+    if (trueMaxSpeed > 160) trueMaxSpeed = 0;
+
+    const dayTimes = timesByDay[localDateStr];
+    const startTimeIso = dayTimes?.firstActive || dayTimes?.firstAny || day.startTime;
+    const endTimeIso = dayTimes?.lastActive || dayTimes?.lastAny || day.endTime || day.startTime;
+
+    if (!grouped[localDateStr]) {
+      grouped[localDateStr] = {
+        deviceName,
+        dateStr: localDateStr,
+        startTime: startTimeIso,
+        endTime: endTimeIso,
+        maxSpeedKmh: trueMaxSpeed,
+        distance: day.distance || 0,
+        engineHours: day.engineHours || 0,
+        harshAccels: 0,
+        harshBrakes: 0,
+        overspeeds: 0
+      };
+    } else {
+      grouped[localDateStr].distance += (day.distance || 0);
+      grouped[localDateStr].engineHours += (day.engineHours || 0);
+      grouped[localDateStr].maxSpeedKmh = Math.max(grouped[localDateStr].maxSpeedKmh || 0, trueMaxSpeed);
+
+      if (startTimeIso && (!grouped[localDateStr].startTime || new Date(startTimeIso) < new Date(grouped[localDateStr].startTime))) {
+        grouped[localDateStr].startTime = startTimeIso;
+      }
+      if (endTimeIso && (!grouped[localDateStr].endTime || new Date(endTimeIso) > new Date(grouped[localDateStr].endTime))) {
+        grouped[localDateStr].endTime = endTimeIso;
+      }
+    }
+  });
+
+  let isOver = false;
+  rawRoute.forEach(pos => {
+    const speedKmh = pos.speed * 1.852;
+    if (speedKmh > 160) return;
+    const localDateStr = getLocalDateStr(pos.fixTime);
+
+    if (speedKmh > currentSpeedLimit) {
+      if (!isOver) {
+        if (grouped[localDateStr]) {
+          grouped[localDateStr].overspeeds++;
+        }
+        isOver = true;
+      }
+    } else {
+      isOver = false;
+    }
+  });
+
+  const harshEvents = calculateHarshEvents(rawRoute);
+  harshEvents.forEach(ev => {
+    const localDateStr = getLocalDateStr(ev.serverTime);
+    if (grouped[localDateStr]) {
+      if (ev.type === 'harshAcceleration') grouped[localDateStr].harshAccels++;
+      if (ev.type === 'harshBraking') grouped[localDateStr].harshBrakes++;
+    }
+  });
+
+  return Object.values(grouped).sort((a, b) => {
+    const [d1, m1, y1] = a.dateStr.split('/');
+    const [d2, m2, y2] = b.dateStr.split('/');
+    return new Date(y1, m1 - 1, d1) - new Date(y2, m2 - 1, d2);
+  });
+};
+
 export default function Reports({ devices, token }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -332,6 +450,63 @@ export default function Reports({ devices, token }) {
             setSummaryData(Object.values(grouped));
         }
       } 
+      // 🔥 NUEVO REPORTE: INFORME DE FACTURACIÓN (INDIVIDUAL) 🔥
+      else if (reportType === 'billing') {
+        setProgressMsg('Generando informe de facturación...');
+        const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
+        const resRoute = await fetch(`${BASE_URL}/api/reports/route?${baseParams}`, { headers });
+
+        if (resSummary.ok && resRoute.ok) {
+            const rawSummary = await resSummary.json();
+            const rawRoute = await resRoute.json();
+            const deviceName = devices.find(d => String(d.id) === String(reportConfig.deviceId))?.name || 'Desconocido';
+            const billingData = buildBillingData(rawSummary, rawRoute, deviceName, speedLimit);
+            setSummaryData(billingData);
+        }
+      }
+      // 🔥 NUEVO REPORTE: INFORME DE FACTURACIÓN (TODA LA FLOTA) 🔥
+      else if (reportType === 'fleet_billing') {
+        const totalVehicles = devices.length;
+        const chunkSize = 2;
+        const fleetBilling = [];
+
+        for (let i = 0; i < totalVehicles; i += chunkSize) {
+            const chunk = devices.slice(i, i + chunkSize);
+            setProgressMsg(`Facturación: Analizando ${Math.min(i + chunkSize, totalVehicles)} de ${totalVehicles} vehículos...`);
+
+            const promises = chunk.map(async (device) => {
+                const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
+                try {
+                    const [resSummary, resRoute] = await Promise.all([
+                        fetch(`${BASE_URL}/api/reports/summary?${params}&daily=true`, { headers }),
+                        fetch(`${BASE_URL}/api/reports/route?${params}`, { headers })
+                    ]);
+                    if (resSummary.ok && resRoute.ok) {
+                        const rawSummary = await resSummary.json();
+                        const rawRoute = await resRoute.json();
+                        return buildBillingData(rawSummary, rawRoute, device.name, speedLimit);
+                    }
+                } catch (e) {
+                    console.warn("Fallo facturación en:", device.name);
+                }
+                return [];
+            });
+
+            const chunkResults = await Promise.all(promises);
+            fleetBilling.push(...chunkResults.flat());
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        fleetBilling.sort((a, b) => {
+            const devCmp = a.deviceName.localeCompare(b.deviceName);
+            if (devCmp !== 0) return devCmp;
+            const [d1, m1, y1] = a.dateStr.split('/');
+            const [d2, m2, y2] = b.dateStr.split('/');
+            return new Date(y1, m1 - 1, d1) - new Date(y2, m2 - 1, d2);
+        });
+
+        setSummaryData(fleetBilling);
+      }
       // 🔥 REPORTE INDIVIDUAL: Desplazamientos Laborales (Por Mes) 
       else if (reportType === 'monthly_trips') {
         setProgressMsg('Analizando viajes y agrupando por mes...');
@@ -721,8 +896,8 @@ export default function Reports({ devices, token }) {
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
     
-    // 🔥 Añadido 'fleet_monthly_trips' para que bloquee el seleccionador y aplique diseño de Flota
-    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips');
+    // 🔥 Añadido 'fleet_monthly_trips' y 'fleet_billing' para diseño de Flota
+    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips' || reportType === 'fleet_billing');
     
     const placaVehiculo = isFleetReport ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
@@ -730,6 +905,8 @@ export default function Reports({ devices, token }) {
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
 
     if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO";
+    else if (reportType === 'billing') nombreReporteMayus = "INFORME DE FACTURACIÓN (INDIVIDUAL)";
+    else if (reportType === 'fleet_billing') nombreReporteMayus = "INFORME DE FACTURACIÓN (TODA LA FLOTA)";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
     else if (reportType === 'ecopetrol') nombreReporteMayus = "INFORME COMPLETO DE ECOPETROL"; 
     else if (reportType === 'speed') nombreReporteMayus = "INFORME DE EXCESOS DE VELOCIDAD (INDIVIDUAL)";
@@ -742,7 +919,7 @@ export default function Reports({ devices, token }) {
     else if (reportType === 'driving_hours') nombreReporteMayus = "HORAS DE CONDUCCIÓN NETAS Y FATIGA (INDIVIDUAL)";
     else if (reportType === 'fleet_driving_hours') nombreReporteMayus = "HORAS DE CONDUCCIÓN NETAS Y FATIGA (FLOTA)";
     else if (reportType === 'monthly_trips') nombreReporteMayus = "TOTAL DESPLAZAMIENTOS LABORALES (INDIVIDUAL)";
-    else if (reportType === 'fleet_monthly_trips') nombreReporteMayus = "TOTAL DESPLAZAMIENTOS LABORALES (TODA LA FLOTA)"; // 🔥
+    else if (reportType === 'fleet_monthly_trips') nombreReporteMayus = "TOTAL DESPLAZAMIENTOS LABORALES (TODA LA FLOTA)";
 
     let htmlTemplate = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -753,9 +930,9 @@ export default function Reports({ devices, token }) {
       </style></head>
       <body>
       <table>
-        <tr><td colspan="8" class="meta-title"><b>TIPO DE INFORME: ${nombreReporteMayus}</b></td></tr>
-        <tr><td colspan="8" class="meta-title"><b>VEHÍCULO / PLACA: ${placaVehiculo}</b></td></tr>
-        <tr><td colspan="8" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
+        <tr><td colspan="10" class="meta-title"><b>TIPO DE INFORME: ${nombreReporteMayus}</b></td></tr>
+        <tr><td colspan="10" class="meta-title"><b>VEHÍCULO / PLACA: ${placaVehiculo}</b></td></tr>
+        <tr><td colspan="10" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
         <tr></tr>
     `;
 
@@ -776,6 +953,20 @@ export default function Reports({ devices, token }) {
         htmlTemplate += `<tr><td>${deviceName}</td><td>${dateStr}</td><td>${maxSpeed}</td><td>${distanceVal}</td><td>${engineStr}</td><td>${startOdo}</td></tr>`;
       });
     } 
+    // 🔥 Exportación Excel para Informe de Facturación
+    else if (reportType === 'billing' || reportType === 'fleet_billing') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+      htmlTemplate += `<tr><th><b>DISPOSITIVO</b></th><th><b>FECHA DE INICIO</b></th><th><b>HORA DE INICIO</b></th><th><b>HORA DE FIN</b></th><th><b>VELOCIDAD MÁXIMA (KM/H)</b></th><th><b>DISTANCIA RECORRIDA (KM)</b></th><th><b>HORAS MOTOR</b></th><th><b>ACELERACIONES BRUSCAS</b></th><th><b>FRENADAS BRUSCAS</b></th><th><b>EXCESOS DE VEL. (>${speedLimit} KM/H)</b></th></tr>`;
+      summaryData.forEach(row => {
+        const startStr = row.startTime ? new Date(row.startTime).toLocaleTimeString() : 'N/A';
+        const endStr = row.endTime ? new Date(row.endTime).toLocaleTimeString() : 'N/A';
+        const maxSpeed = (row.maxSpeedKmh || 0).toFixed(2).replace('.', ',');
+        const distKm = row.distance ? (row.distance / 1000).toFixed(2).replace('.', ',') : '0,00';
+        const engineStr = formatDuration(row.engineHours);
+
+        htmlTemplate += `<tr><td><b>${row.deviceName}</b></td><td>${row.dateStr}</td><td>${startStr}</td><td>${endStr}</td><td>${maxSpeed}</td><td>${distKm}</td><td>${engineStr}</td><td>${row.harshAccels}</td><td>${row.harshBrakes}</td><td>${row.overspeeds}</td></tr>`;
+      });
+    }
     // 🔥 Exportación Excel Actualizada para ambas versiones (Individual y Flota)
     else if (reportType === 'monthly_trips' || reportType === 'fleet_monthly_trips') {
       if (summaryData.length === 0) return alert("No hay datos para exportar.");
@@ -901,14 +1092,12 @@ export default function Reports({ devices, token }) {
     );
   }
 
-  // 🔥 Se inyecta la nueva variable para que el vehículo se desactive automáticamente
-  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips');
+  // 🔥 Se inyecta 'fleet_billing' para que el vehículo se desactive automáticamente en modo flota
+  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips' || reportType === 'fleet_billing');
 
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
       <h2 style={{color:'white', margin:'0 0 20px 0'}}>Módulo de Informes Analíticos</h2>
-      
-      
 
       <div style={styles.adminCard}>
         <form onSubmit={handleFetchData} style={{display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end'}}>
@@ -936,6 +1125,8 @@ export default function Reports({ devices, token }) {
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
                 <optgroup label="Uso y Tiempos">
                     <option value="daily">Resumen Diario</option>
+                    <option value="billing">Informe de Facturación (Individual)</option>
+                    <option value="fleet_billing">Informe de Facturación (Toda la Flota)</option>
                     <option value="idle">Tiempo en Ralentí</option>
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                     <option value="monthly_trips">Total Desplazamientos Laborales (Individual)</option>
@@ -947,7 +1138,6 @@ export default function Reports({ devices, token }) {
                     <option value="fleet_behavior">Ranking de Conducción (Toda la Flota)</option>
                     <option value="speed">Exceso de Velocidad (Individual Punto a Punto)</option>
                     <option value="fleet_speed">Exceso de Velocidad (Toda la Flota Punto a Punto)</option>
-                    {/* 🔥 NUEVO INFORME DE FLOTA AQUÍ 🔥 */}
                     <option value="fleet_monthly_trips">Desplazamientos Laborales (Por Flota Mensual)</option>
                     <option value="harsh">Aceleración y Frenada Brusca</option>
                 </optgroup>
@@ -958,7 +1148,7 @@ export default function Reports({ devices, token }) {
             </select>
           </div>
 
-          {(reportType === 'speed' || reportType === 'fleet_speed' || reportType === 'behavior' || reportType === 'fleet_behavior') && (
+          {(reportType === 'speed' || reportType === 'fleet_speed' || reportType === 'behavior' || reportType === 'fleet_behavior' || reportType === 'billing' || reportType === 'fleet_billing') && (
             <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={speedLimit} onChange={e => setSpeedLimit(e.target.value)} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -1001,6 +1191,55 @@ export default function Reports({ devices, token }) {
       </div>
 
       <div style={styles.tableContainer}>
+
+        {/* 🔥 RENDERIZADO DEL NUEVO INFORME DE FACTURACIÓN (INDIVIDUAL Y FLOTA) 🔥 */}
+        {(reportType === 'billing' || reportType === 'fleet_billing') && (
+          <>
+            <h3 style={styles.tableTitle}>
+              {reportType === 'billing'
+                ? `Informe de Facturación (${summaryData.length} registros)`
+                : `Informe de Facturación Consolidado - Flota (${summaryData.length} registros)`}
+            </h3>
+            <div style={{maxHeight: '500px', overflowY: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        <th>Dispositivo</th>
+                        <th>Fecha de inicio</th>
+                        <th>Hora de inicio</th>
+                        <th>Hora de fin</th>
+                        <th>Velocidad máxima</th>
+                        <th>Distancia recorrida</th>
+                        <th>Horas motor</th>
+                        <th>Aceleraciones Bruscas</th>
+                        <th>Frenadas Bruscas</th>
+                        <th>Excesos de Vel. (&gt;{speedLimit} km/h)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {summaryData.length === 0 ? (
+                    <tr><td colSpan="10" style={styles.emptyText}>No hay registros de facturación en este rango.</td></tr>
+                  ) : (
+                    summaryData.map((row, index) => (
+                      <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
+                        <td style={{...styles.td, fontWeight: 'bold', color: '#3B82F6'}}>{row.deviceName}</td>
+                        <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>{row.dateStr}</td>
+                        <td style={{...styles.td, color: '#9CA3AF'}}>{row.startTime ? new Date(row.startTime).toLocaleTimeString() : 'N/A'}</td>
+                        <td style={{...styles.td, color: '#9CA3AF'}}>{row.endTime ? new Date(row.endTime).toLocaleTimeString() : 'N/A'}</td>
+                        <td style={{...styles.td, color: '#EF4444', fontWeight: 'bold'}}>{(row.maxSpeedKmh || 0).toFixed(2)} km/h</td>
+                        <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{(row.distance / 1000).toFixed(2)} Km</td>
+                        <td style={{...styles.td, color: '#F59E0B', fontWeight: 'bold'}}>{formatDuration(row.engineHours)}</td>
+                        <td style={{...styles.td, color: row.harshAccels > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{row.harshAccels}</td>
+                        <td style={{...styles.td, color: row.harshBrakes > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{row.harshBrakes}</td>
+                        <td style={{...styles.td, color: row.overspeeds > 0 ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>{row.overspeeds}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
         
         {/* 🔥 RENDERIZADO DE LAS DOS VERSIONES (INDIVIDUAL Y FLOTA MÚLTIPLE) 🔥 */}
         {(reportType === 'monthly_trips' || reportType === 'fleet_monthly_trips') && (
