@@ -88,7 +88,7 @@ const calculateHarshEvents = (rawRoute) => {
   return calculatedEvents;
 };
 
-// 🔥 NUEVO CEREBRO: ANALIZADOR DE FATIGA Y TIEMPOS DE CONDUCCIÓN
+// 🔥 ANALIZADOR DE FATIGA Y TIEMPOS DE CONDUCCIÓN
 const calculateDrivingHours = (routeData, deviceName) => {
   const routeByDay = {};
   const getLocalDateStr = (isoString) => {
@@ -185,14 +185,12 @@ const buildBillingData = (rawSummary, rawRoute, deviceName, currentSpeedLimit) =
     const localDateStr = getLocalDateStr(pos.fixTime);
     const speedKmh = pos.speed * 1.852;
 
-    // Escudo anti-aviones (Límite 160 km/h)
     if (speedKmh <= 160) {
       if (!realMaxSpeedByDay[localDateStr] || speedKmh > realMaxSpeedByDay[localDateStr]) {
         realMaxSpeedByDay[localDateStr] = speedKmh;
       }
     }
 
-    // Registro de hora de inicio y hora de fin del día
     const isMovingOrOn = pos.attributes?.ignition || speedKmh > 2;
     if (!timesByDay[localDateStr]) {
       timesByDay[localDateStr] = {
@@ -286,6 +284,98 @@ const buildBillingData = (rawSummary, rawRoute, deviceName, currentSpeedLimit) =
     const [d2, m2, y2] = b.dateStr.split('/');
     return new Date(y1, m1 - 1, d1) - new Date(y2, m2 - 1, d2);
   });
+};
+
+// 🔥 CONSOLIDADOR MAESTRO 360° POR VEHÍCULO (TODA LA INFORMACIÓN POSIBLE)
+const buildMasterVehicleStats = (deviceName, rawSummary, rawRoute, rawTrips, rawStops, currentSpeedLimit) => {
+  let distanceKm = 0;
+  let engineHoursMs = 0;
+  let maxSpeedKmh = 0;
+
+  if (Array.isArray(rawSummary)) {
+    rawSummary.forEach(s => {
+      distanceKm += (s.distance || 0) / 1000;
+      engineHoursMs += (s.engineHours || 0);
+      const fallbackMax = s.maxSpeed ? (s.maxSpeed * 1.852) : 0;
+      if (fallbackMax <= 160 && fallbackMax > maxSpeedKmh) {
+        maxSpeedKmh = fallbackMax;
+      }
+    });
+  }
+
+  let overspeeds = 0;
+  let isOver = false;
+  let routeMaxSpeed = 0;
+
+  if (Array.isArray(rawRoute)) {
+    rawRoute.forEach(pos => {
+      const speedKmh = pos.speed * 1.852;
+      if (speedKmh <= 160) {
+        if (speedKmh > routeMaxSpeed) routeMaxSpeed = speedKmh;
+        if (speedKmh > currentSpeedLimit) {
+          if (!isOver) { overspeeds++; isOver = true; }
+        } else {
+          isOver = false;
+        }
+      }
+    });
+  }
+  if (routeMaxSpeed > 0) maxSpeedKmh = routeMaxSpeed;
+
+  let harshAccels = 0;
+  let harshBrakes = 0;
+  if (Array.isArray(rawRoute) && rawRoute.length > 1) {
+    const harshEvents = calculateHarshEvents(rawRoute);
+    harshEvents.forEach(ev => {
+      if (ev.type === 'harshAcceleration') harshAccels++;
+      if (ev.type === 'harshBraking') harshBrakes++;
+    });
+  }
+
+  let drivingHoursMs = 0;
+  let maxConsecutiveMs = 0;
+  if (Array.isArray(rawRoute) && rawRoute.length > 0) {
+    const drivingDays = calculateDrivingHours(rawRoute, deviceName);
+    drivingDays.forEach(d => {
+      drivingHoursMs += d.totalDrivingMs;
+      if (d.maxConsecutiveMs > maxConsecutiveMs) maxConsecutiveMs = d.maxConsecutiveMs;
+    });
+  }
+
+  const totalTrips = Array.isArray(rawTrips) ? rawTrips.length : 0;
+
+  let stopsCount = 0;
+  let idleHoursMs = 0;
+  if (Array.isArray(rawStops)) {
+    stopsCount = rawStops.length;
+    rawStops.forEach(stop => {
+      if (stop.engineHours && stop.engineHours > 0) {
+        idleHoursMs += stop.engineHours;
+      }
+    });
+  }
+
+  if (engineHoursMs < drivingHoursMs + idleHoursMs) {
+    engineHoursMs = drivingHoursMs + idleHoursMs;
+  }
+
+  const totalInfractions = overspeeds + harshAccels + harshBrakes;
+
+  return {
+    deviceName,
+    totalTrips,
+    distanceKm,
+    maxSpeedKmh,
+    engineHoursMs,
+    drivingHoursMs,
+    maxConsecutiveMs,
+    stopsCount,
+    idleHoursMs,
+    overspeeds,
+    harshAccels,
+    harshBrakes,
+    totalInfractions
+  };
 };
 
 export default function Reports({ devices, token }) {
@@ -415,7 +505,6 @@ export default function Reports({ devices, token }) {
                 const localDateStr = getLocalDateStr(pos.fixTime);
                 const speedKmh = pos.speed * 1.852;
                 
-                // 🔥 ESCUDO ANTI-AVIONES (Límite 160 km/h)
                 if (speedKmh <= 160) {
                     if (!realMaxSpeedByDay[localDateStr] || speedKmh > realMaxSpeedByDay[localDateStr]) {
                         realMaxSpeedByDay[localDateStr] = speedKmh;
@@ -450,7 +539,47 @@ export default function Reports({ devices, token }) {
             setSummaryData(Object.values(grouped));
         }
       } 
-      // 🔥 NUEVO REPORTE: INFORME DE FACTURACIÓN (INDIVIDUAL) 🔥
+      // 🔥 REPORTE: INFORME GENERAL MAESTRO 360° (TODA LA FLOTA + GRÁFICOS) 🔥
+      else if (reportType === 'fleet_master') {
+        const totalVehicles = devices.length;
+        const chunkSize = 2;
+        const masterStats = [];
+
+        for (let i = 0; i < totalVehicles; i += chunkSize) {
+            const chunk = devices.slice(i, i + chunkSize);
+            setProgressMsg(`Auditoría General 360°: Procesando ${Math.min(i + chunkSize, totalVehicles)} de ${totalVehicles} vehículos...`);
+
+            const promises = chunk.map(async (device) => {
+                const params = `deviceId=${device.id}&from=${fromISO}&to=${toISO}`;
+                try {
+                    const [resSum, resRoute, resTrips, resStops] = await Promise.all([
+                        fetch(`${BASE_URL}/api/reports/summary?${params}`, { headers }),
+                        fetch(`${BASE_URL}/api/reports/route?${params}`, { headers }),
+                        fetch(`${BASE_URL}/api/reports/trips?${params}`, { headers }),
+                        fetch(`${BASE_URL}/api/reports/stops?${params}`, { headers })
+                    ]);
+
+                    const rawSummary = resSum.ok ? await resSum.json() : [];
+                    const rawRoute = resRoute.ok ? await resRoute.json() : [];
+                    const rawTrips = resTrips.ok ? await resTrips.json() : [];
+                    const rawStops = resStops.ok ? await resStops.json() : [];
+
+                    return buildMasterVehicleStats(device.name, rawSummary, rawRoute, rawTrips, rawStops, speedLimit);
+                } catch (e) {
+                    console.warn("Fallo en informe maestro para:", device.name);
+                    return buildMasterVehicleStats(device.name, [], [], [], [], speedLimit);
+                }
+            });
+
+            const chunkResults = await Promise.all(promises);
+            masterStats.push(...chunkResults);
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+
+        masterStats.sort((a, b) => b.distanceKm - a.distanceKm);
+        setSummaryData(masterStats);
+      }
+      // 🔥 REPORTE: INFORME DE FACTURACIÓN (INDIVIDUAL) 🔥
       else if (reportType === 'billing') {
         setProgressMsg('Generando informe de facturación...');
         const resSummary = await fetch(`${BASE_URL}/api/reports/summary?${baseParams}&daily=true`, { headers });
@@ -464,7 +593,7 @@ export default function Reports({ devices, token }) {
             setSummaryData(billingData);
         }
       }
-      // 🔥 NUEVO REPORTE: INFORME DE FACTURACIÓN (TODA LA FLOTA) 🔥
+      // 🔥 REPORTE: INFORME DE FACTURACIÓN (TODA LA FLOTA) 🔥
       else if (reportType === 'fleet_billing') {
         const totalVehicles = devices.length;
         const chunkSize = 2;
@@ -561,7 +690,6 @@ export default function Reports({ devices, token }) {
                             const year = d.getFullYear();
                             const month = String(d.getMonth() + 1).padStart(2, '0');
                             
-                            // Llave única para separar los meses y los vehículos
                             const sortKey = `${device.name}-${year}-${month}`; 
                             const monthName = d.toLocaleString('es-CO', { month: 'long' }).toUpperCase();
                             const displayStr = `${monthName} ${year}`;
@@ -591,7 +719,6 @@ export default function Reports({ devices, token }) {
             await new Promise(resolve => setTimeout(resolve, 400));
         }
 
-        // Ordenamos por Mes y luego por el nombre del Vehículo
         fleetStats.sort((a, b) => {
             const monthDiff = a.monthRaw.localeCompare(b.monthRaw);
             if (monthDiff !== 0) return monthDiff;
@@ -896,8 +1023,14 @@ export default function Reports({ devices, token }) {
 
     const selectedDevice = devices.find(d => String(d.id) === String(reportConfig.deviceId));
     
-    // 🔥 Añadido 'fleet_monthly_trips' y 'fleet_billing' para diseño de Flota
-    const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips' || reportType === 'fleet_billing');
+    const isFleetReport = (
+      reportType === 'fleet_speed' ||
+      reportType === 'fleet_behavior' ||
+      reportType === 'fleet_driving_hours' ||
+      reportType === 'fleet_monthly_trips' ||
+      reportType === 'fleet_billing' ||
+      reportType === 'fleet_master'
+    );
     
     const placaVehiculo = isFleetReport ? "TODA LA FLOTA" : (selectedDevice ? selectedDevice.name.toUpperCase() : "TODOS LOS VEHÍCULOS");
     
@@ -905,6 +1038,7 @@ export default function Reports({ devices, token }) {
     let nombreReporteMayus = "INFORME DETALLADO DE TELEMETRÍA";
 
     if (reportType === 'daily') nombreReporteMayus = "RESUMEN DIARIO";
+    else if (reportType === 'fleet_master') nombreReporteMayus = "INFORME GENERAL MAESTRO 360° CON GRÁFICOS (TODA LA FLOTA)";
     else if (reportType === 'billing') nombreReporteMayus = "INFORME DE FACTURACIÓN (INDIVIDUAL)";
     else if (reportType === 'fleet_billing') nombreReporteMayus = "INFORME DE FACTURACIÓN (TODA LA FLOTA)";
     else if (reportType === 'route') nombreReporteMayus = "INFORME DETALLADO PUNTO A PUNTO";
@@ -924,15 +1058,18 @@ export default function Reports({ devices, token }) {
     let htmlTemplate = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"/><style>
-        th { background-color: #1F2937; color: #FFFFFF; font-weight: bold; text-align: left; font-family: Arial; font-size: 11pt; padding: 6px; }
-        td { border: 0.5pt solid #D1D5DB; font-family: Arial; font-size: 10pt; padding: 4px; }
+        th { background-color: #1F2937; color: #FFFFFF; font-weight: bold; text-align: left; font-family: Arial; font-size: 10pt; padding: 6px; }
+        td { border: 0.5pt solid #D1D5DB; font-family: Arial; font-size: 9.5pt; padding: 4px; }
         .meta-title { font-size: 12pt; font-weight: bold; color: #111827; font-family: Arial; }
+        .kpi-header { background-color: #1E3A8A; color: #FFFFFF; font-weight: bold; text-align: center; font-size: 10pt; }
+        .kpi-val { background-color: #EFF6FF; color: #1E3A8A; font-weight: bold; text-align: center; font-size: 12pt; }
+        .total-row { background-color: #F3F4F6; font-weight: bold; color: #111827; }
       </style></head>
       <body>
       <table>
-        <tr><td colspan="10" class="meta-title"><b>TIPO DE INFORME: ${nombreReporteMayus}</b></td></tr>
-        <tr><td colspan="10" class="meta-title"><b>VEHÍCULO / PLACA: ${placaVehiculo}</b></td></tr>
-        <tr><td colspan="10" style="color: #6B7280;">Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
+        <tr><td colspan="15" class="meta-title"><b>TIPO DE INFORME: ${nombreReporteMayus}</b></td></tr>
+        <tr><td colspan="15" class="meta-title"><b>VEHÍCULO / PLACA: ${placaVehiculo}</b></td></tr>
+        <tr><td colspan="15" style="color: #6B7280;">Periodo: ${reportConfig.from || 'N/A'} a ${reportConfig.to || 'N/A'} | Fecha de exportación: ${new Date().toLocaleString()}</td></tr>
         <tr></tr>
     `;
 
@@ -953,6 +1090,195 @@ export default function Reports({ devices, token }) {
         htmlTemplate += `<tr><td>${deviceName}</td><td>${dateStr}</td><td>${maxSpeed}</td><td>${distanceVal}</td><td>${engineStr}</td><td>${startOdo}</td></tr>`;
       });
     } 
+    // 🔥 EXPORTACIÓN EXCEL: INFORME GENERAL MAESTRO 360° CON 3 GRÁFICOS INTEGRADOS 🔥
+    else if (reportType === 'fleet_master') {
+      if (summaryData.length === 0) return alert("No hay datos para exportar.");
+
+      const totalFleetKm = summaryData.reduce((acc, r) => acc + r.distanceKm, 0);
+      const totalFleetTrips = summaryData.reduce((acc, r) => acc + r.totalTrips, 0);
+      const totalFleetEngineMs = summaryData.reduce((acc, r) => acc + r.engineHoursMs, 0);
+      const totalFleetDrivingMs = summaryData.reduce((acc, r) => acc + r.drivingHoursMs, 0);
+      const totalFleetIdleMs = summaryData.reduce((acc, r) => acc + r.idleHoursMs, 0);
+      const totalFleetStops = summaryData.reduce((acc, r) => acc + r.stopsCount, 0);
+      const totalFleetOverspeeds = summaryData.reduce((acc, r) => acc + r.overspeeds, 0);
+      const totalFleetAccels = summaryData.reduce((acc, r) => acc + r.harshAccels, 0);
+      const totalFleetBrakes = summaryData.reduce((acc, r) => acc + r.harshBrakes, 0);
+      const totalFleetInfractions = summaryData.reduce((acc, r) => acc + r.totalInfractions, 0);
+
+      const maxKmVehicle = Math.max(...summaryData.map(r => r.distanceKm), 1);
+      const maxInfVehicle = Math.max(...summaryData.map(r => r.totalInfractions), 1);
+
+      // 1. Gráfico 1: Top 10 Productividad (Kilómetros)
+      const top10Km = [...summaryData].sort((a, b) => b.distanceKm - a.distanceKm).slice(0, 10);
+      const chartKmConfig = {
+        type: 'bar',
+        data: {
+          labels: top10Km.map(d => d.deviceName),
+          datasets: [{
+            label: 'Kilómetros Recorridos (km)',
+            data: top10Km.map(d => Number(d.distanceKm.toFixed(1))),
+            backgroundColor: '#2563EB'
+          }]
+        },
+        options: {
+          title: { display: true, text: 'TOP 10 PRODUCTIVIDAD FLOTA (KILÓMETROS)' }
+        }
+      };
+
+      // 2. Gráfico 2: Top 10 Infracciones por Vehículo
+      const top10Inf = [...summaryData].sort((a, b) => b.totalInfractions - a.totalInfractions).slice(0, 10);
+      const chartInfConfig = {
+        type: 'bar',
+        data: {
+          labels: top10Inf.map(d => d.deviceName),
+          datasets: [
+            { label: 'Excesos Vel.', data: top10Inf.map(d => d.overspeeds), backgroundColor: '#EF4444' },
+            { label: 'Aceleraciones', data: top10Inf.map(d => d.harshAccels), backgroundColor: '#F59E0B' },
+            { label: 'Frenadas', data: top10Inf.map(d => d.harshBrakes), backgroundColor: '#F97316' }
+          ]
+        },
+        options: {
+          title: { display: true, text: 'TOP 10 AUDITORÍA DE INFRACCIONES VIALES' },
+          scales: { xAxes: [{ stacked: true }], yAxes: [{ stacked: true }] }
+        }
+      };
+
+      // 3. Gráfico 3 (NUEVO): Dona de Eficiencia de Motor (Horas en Movimiento vs. Horas en Ralentí)
+      const drivingHoursNum = Number((totalFleetDrivingMs / 3600000).toFixed(2));
+      const idleHoursNum = Number((totalFleetIdleMs / 3600000).toFixed(2));
+      const totalActiveMotorH = drivingHoursNum + idleHoursNum;
+      const productivePct = totalActiveMotorH > 0 ? Math.round((drivingHoursNum / totalActiveMotorH) * 100) : 100;
+      const idlePct = totalActiveMotorH > 0 ? (100 - productivePct) : 0;
+
+      const chartEfficiencyConfig = {
+        type: 'doughnut',
+        data: {
+          labels: [
+            `Movimiento Productivo: ${drivingHoursNum}h (${productivePct}%)`,
+            `Pérdida en Ralentí: ${idleHoursNum}h (${idlePct}%)`
+          ],
+          datasets: [{
+            data: totalActiveMotorH > 0 ? [drivingHoursNum, idleHoursNum] : [1, 0],
+            backgroundColor: ['#10B981', '#F59E0B']
+          }]
+        },
+        options: {
+          title: { display: true, text: 'EFICIENCIA OPERATIVA: MOVIMIENTO VS. RALENTÍ' },
+          plugins: {
+            doughnutlabel: {
+              labels: [
+                { text: `${productivePct}%`, font: { size: 20 } },
+                { text: 'Productivo', font: { size: 12 } }
+              ]
+            }
+          }
+        }
+      };
+
+      const chartKmUrl = `https://quickchart.io/chart?w=420&h=250&c=${encodeURIComponent(JSON.stringify(chartKmConfig))}`;
+      const chartInfUrl = `https://quickchart.io/chart?w=420&h=250&c=${encodeURIComponent(JSON.stringify(chartInfConfig))}`;
+      const chartEffUrl = `https://quickchart.io/chart?w=420&h=250&c=${encodeURIComponent(JSON.stringify(chartEfficiencyConfig))}`;
+
+      // Bloque de KPIs Ejecutivos + 3 Gráficos Gerenciales
+      htmlTemplate += `
+        <tr><td colspan="15" style="background-color: #111827; color: #FFFFFF; font-weight: bold; font-size: 11pt;">📊 1. RESUMEN EJECUTIVO DE LA FLOTA (KPIs GLOBALES)</td></tr>
+        <tr>
+          <td colspan="3" class="kpi-header">VEHÍCULOS AUDITADOS</td>
+          <td colspan="3" class="kpi-header">DISTANCIA TOTAL FLOTA</td>
+          <td colspan="3" class="kpi-header">TOTAL VIAJES</td>
+          <td colspan="3" class="kpi-header">EFICIENCIA DE MOTOR (MOV. / RALENTÍ)</td>
+          <td colspan="3" class="kpi-header">TOTAL INFRACCIONES VIALES</td>
+        </tr>
+        <tr>
+          <td colspan="3" class="kpi-val">${summaryData.length} Unidades</td>
+          <td colspan="3" class="kpi-val">${totalFleetKm.toFixed(2).replace('.', ',')} km</td>
+          <td colspan="3" class="kpi-val">${totalFleetTrips} Viajes</td>
+          <td colspan="3" class="kpi-val" style="color: #059669;">${productivePct}% Productivo (${idlePct}% Ralentí)</td>
+          <td colspan="3" class="kpi-val" style="color: #DC2626;">${totalFleetInfractions} Alertas</td>
+        </tr>
+        <tr></tr>
+        <tr><td colspan="15" style="background-color: #111827; color: #FFFFFF; font-weight: bold; font-size: 11pt;">📈 2. GRÁFICOS GERENCIALES: PRODUCTIVIDAD, INFRACCIONES Y EFICIENCIA DE COMBUSTIBLE</td></tr>
+        <tr style="height: 265px;">
+          <td colspan="5" style="text-align: center; vertical-align: middle;">
+            <img src="${chartKmUrl}" width="410" height="245" alt="Gráfico Kilometraje" />
+          </td>
+          <td colspan="5" style="text-align: center; vertical-align: middle;">
+            <img src="${chartInfUrl}" width="410" height="245" alt="Gráfico Infracciones" />
+          </td>
+          <td colspan="5" style="text-align: center; vertical-align: middle;">
+            <img src="${chartEffUrl}" width="410" height="245" alt="Gráfico Dona Eficiencia" />
+          </td>
+        </tr>
+        <tr></tr>
+        <tr><td colspan="15" style="background-color: #111827; color: #FFFFFF; font-weight: bold; font-size: 11pt;">📋 3. TABLA MAESTRA CONSOLIDADA POR VEHÍCULO (360°)</td></tr>
+        <tr>
+          <th><b>VEHÍCULO / PLACA</b></th>
+          <th><b>TOTAL VIAJES</b></th>
+          <th><b>DISTANCIA (KM)</b></th>
+          <th><b>GRÁFICO KM (VISUAL)</b></th>
+          <th><b>VEL. MÁXIMA (KM/H)</b></th>
+          <th><b>HORAS MOTOR TOTALES</b></th>
+          <th><b>CONDUCCIÓN NETA (MOV.)</b></th>
+          <th><b>TIEMPO RALENTÍ (DESPERDICIO)</b></th>
+          <th><b>TOTAL PARADAS</b></th>
+          <th><b>MÁX. CONDUCCIÓN SEGUIDA</b></th>
+          <th><b>ESTADO FATIGA</b></th>
+          <th><b>EXCESOS VEL. (>${speedLimit})</b></th>
+          <th><b>ACELERACIONES BRUSCAS</b></th>
+          <th><b>FRENADAS BRUSCAS</b></th>
+          <th><b>TOTAL INFRACCIONES</b></th>
+        </tr>
+      `;
+
+      summaryData.forEach(row => {
+        const kmBarsCount = Math.max(1, Math.round((row.distanceKm / maxKmVehicle) * 12));
+        const kmVisualBar = '█'.repeat(kmBarsCount) + ` (${Math.round((row.distanceKm / (totalFleetKm || 1)) * 100)}%)`;
+        const isFatigued = (row.maxConsecutiveMs / 3600000) > 4;
+        const fatigaText = isFatigued ? '⚠️ Riesgo Fatiga (>4h)' : '✅ Óptimo';
+
+        htmlTemplate += `
+          <tr>
+            <td><b>${row.deviceName}</b></td>
+            <td>${row.totalTrips}</td>
+            <td><b>${row.distanceKm.toFixed(2).replace('.', ',')}</b></td>
+            <td style="color: #2563EB; font-family: Consolas, monospace;">${row.distanceKm > 0 ? kmVisualBar : '-'}</td>
+            <td>${row.maxSpeedKmh.toFixed(1).replace('.', ',')}</td>
+            <td>${formatDuration(row.engineHoursMs)}</td>
+            <td>${formatDuration(row.drivingHoursMs)}</td>
+            <td style="color: ${row.idleHoursMs > 0 ? '#D97706' : '#10B981'};">${formatDuration(row.idleHoursMs)}</td>
+            <td>${row.stopsCount}</td>
+            <td>${formatDuration(row.maxConsecutiveMs)}</td>
+            <td style="color: ${isFatigued ? '#DC2626' : '#059669'}; font-weight: bold;">${fatigaText}</td>
+            <td style="color: ${row.overspeeds > 0 ? '#DC2626' : '#111827'};">${row.overspeeds}</td>
+            <td>${row.harshAccels}</td>
+            <td>${row.harshBrakes}</td>
+            <td style="background-color: ${row.totalInfractions > 0 ? '#FEE2E2' : '#ECFDF5'}; color: ${row.totalInfractions > 0 ? '#DC2626' : '#059669'}; font-weight: bold;">
+              ${row.totalInfractions} ${row.totalInfractions > 0 ? '█'.repeat(Math.max(1, Math.round((row.totalInfractions / maxInfVehicle) * 6))) : ''}
+            </td>
+          </tr>
+        `;
+      });
+
+      htmlTemplate += `
+        <tr class="total-row">
+          <td><b>TOTALES FLOTA (${summaryData.length})</b></td>
+          <td><b>${totalFleetTrips}</b></td>
+          <td><b>${totalFleetKm.toFixed(2).replace('.', ',')}</b></td>
+          <td><b>100% FLOTA</b></td>
+          <td><b>-</b></td>
+          <td><b>${formatDuration(totalFleetEngineMs)}</b></td>
+          <td><b>${formatDuration(totalFleetDrivingMs)}</b></td>
+          <td><b>${formatDuration(totalFleetIdleMs)}</b></td>
+          <td><b>${totalFleetStops}</b></td>
+          <td><b>-</b></td>
+          <td><b>-</b></td>
+          <td><b>${totalFleetOverspeeds}</b></td>
+          <td><b>${totalFleetAccels}</b></td>
+          <td><b>${totalFleetBrakes}</b></td>
+          <td><b>${totalFleetInfractions}</b></td>
+        </tr>
+      `;
+    }
     // 🔥 Exportación Excel para Informe de Facturación
     else if (reportType === 'billing' || reportType === 'fleet_billing') {
       if (summaryData.length === 0) return alert("No hay datos para exportar.");
@@ -967,7 +1293,6 @@ export default function Reports({ devices, token }) {
         htmlTemplate += `<tr><td><b>${row.deviceName}</b></td><td>${row.dateStr}</td><td>${startStr}</td><td>${endStr}</td><td>${maxSpeed}</td><td>${distKm}</td><td>${engineStr}</td><td>${row.harshAccels}</td><td>${row.harshBrakes}</td><td>${row.overspeeds}</td></tr>`;
       });
     }
-    // 🔥 Exportación Excel Actualizada para ambas versiones (Individual y Flota)
     else if (reportType === 'monthly_trips' || reportType === 'fleet_monthly_trips') {
       if (summaryData.length === 0) return alert("No hay datos para exportar.");
       htmlTemplate += `<tr>${reportType === 'fleet_monthly_trips' ? '<th><b>VEHÍCULO / PLACA</b></th>' : ''}<th><b>MES / AÑO</b></th><th><b>TOTAL DESPLAZAMIENTOS (VIAJES)</b></th><th><b>DISTANCIA TOTAL (KM)</b></th><th><b>TIEMPO DE CONDUCCIÓN ACUMULADO</b></th></tr>`;
@@ -1092,8 +1417,14 @@ export default function Reports({ devices, token }) {
     );
   }
 
-  // 🔥 Se inyecta 'fleet_billing' para que el vehículo se desactive automáticamente en modo flota
-  const isFleetReport = (reportType === 'fleet_speed' || reportType === 'fleet_behavior' || reportType === 'fleet_driving_hours' || reportType === 'fleet_monthly_trips' || reportType === 'fleet_billing');
+  const isFleetReport = (
+    reportType === 'fleet_speed' ||
+    reportType === 'fleet_behavior' ||
+    reportType === 'fleet_driving_hours' ||
+    reportType === 'fleet_monthly_trips' ||
+    reportType === 'fleet_billing' ||
+    reportType === 'fleet_master'
+  );
 
   return (
     <main style={{flex: 1, padding: '20px 30px', overflowY: 'auto'}}>
@@ -1120,13 +1451,16 @@ export default function Reports({ devices, token }) {
             </select>
           </div>
 
-          <div style={{flex: 1, minWidth: '220px'}}>
+          <div style={{flex: 1, minWidth: '240px'}}>
             <label style={styles.label}>Tipo de Informe:</label>
             <select value={reportType} onChange={e => setReportType(e.target.value)} style={styles.input}>
-                <optgroup label="Uso y Tiempos">
-                    <option value="daily">Resumen Diario</option>
+                <optgroup label="Gerencial / Consolidado 360°">
+                    <option value="fleet_master">⭐ Informe General Maestro + Gráficos (Toda la Flota)</option>
                     <option value="billing">Informe de Facturación (Individual)</option>
                     <option value="fleet_billing">Informe de Facturación (Toda la Flota)</option>
+                </optgroup>
+                <optgroup label="Uso y Tiempos">
+                    <option value="daily">Resumen Diario</option>
                     <option value="idle">Tiempo en Ralentí</option>
                     <option value="stops">Vehículos Detenidos (Paradas)</option>
                     <option value="monthly_trips">Total Desplazamientos Laborales (Individual)</option>
@@ -1148,7 +1482,7 @@ export default function Reports({ devices, token }) {
             </select>
           </div>
 
-          {(reportType === 'speed' || reportType === 'fleet_speed' || reportType === 'behavior' || reportType === 'fleet_behavior' || reportType === 'billing' || reportType === 'fleet_billing') && (
+          {(reportType === 'speed' || reportType === 'fleet_speed' || reportType === 'behavior' || reportType === 'fleet_behavior' || reportType === 'billing' || reportType === 'fleet_billing' || reportType === 'fleet_master') && (
             <div style={{width: '100px'}}>
               <label style={styles.label}>Límite (km/h):</label>
               <input type="number" required value={speedLimit} onChange={e => setSpeedLimit(e.target.value)} style={{...styles.input, color: '#EF4444', fontWeight: 'bold'}} />
@@ -1192,7 +1526,191 @@ export default function Reports({ devices, token }) {
 
       <div style={styles.tableContainer}>
 
-        {/* 🔥 RENDERIZADO DEL NUEVO INFORME DE FACTURACIÓN (INDIVIDUAL Y FLOTA) 🔥 */}
+        {/* 🔥 RENDERIZADO DEL INFORME GENERAL MAESTRO 360° + 3 GRÁFICOS EN PANTALLA 🔥 */}
+        {reportType === 'fleet_master' && (
+          <>
+            <h3 style={styles.tableTitle}>
+              ⭐ Informe General Maestro 360° - Toda la Flota ({summaryData.length} vehículos auditados)
+            </h3>
+
+            {summaryData.length > 0 && (() => {
+              const maxKm = Math.max(...summaryData.map(r => r.distanceKm), 1);
+              const maxInf = Math.max(...summaryData.map(r => r.totalInfractions), 1);
+              const totalKm = summaryData.reduce((a, b) => a + b.distanceKm, 0);
+              const totalInf = summaryData.reduce((a, b) => a + b.totalInfractions, 0);
+              const totalTrips = summaryData.reduce((a, b) => a + b.totalTrips, 0);
+              const totalEngine = summaryData.reduce((a, b) => a + b.engineHoursMs, 0);
+              const totalDriving = summaryData.reduce((a, b) => a + b.drivingHoursMs, 0);
+              const totalIdle = summaryData.reduce((a, b) => a + b.idleHoursMs, 0);
+
+              const activeSumMs = totalDriving + totalIdle;
+              const productivePct = activeSumMs > 0 ? Math.round((totalDriving / activeSumMs) * 100) : 100;
+              const idlePct = activeSumMs > 0 ? (100 - productivePct) : 0;
+
+              return (
+                <div style={{ marginBottom: '25px' }}>
+                  {/* Tarjetas KPI */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ backgroundColor: '#0B1120', padding: '14px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <div style={{ fontSize: '11px', color: '#9CA3AF' }}>DISTANCIA TOTAL FLOTA</div>
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#10B981', marginTop: '4px' }}>{totalKm.toFixed(1)} km</div>
+                    </div>
+                    <div style={{ backgroundColor: '#0B1120', padding: '14px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <div style={{ fontSize: '11px', color: '#9CA3AF' }}>DESPLAZAMIENTOS TOTALES</div>
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#3B82F6', marginTop: '4px' }}>{totalTrips} viajes</div>
+                    </div>
+                    <div style={{ backgroundColor: '#0B1120', padding: '14px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <div style={{ fontSize: '11px', color: '#9CA3AF' }}>HORAS MOTOR ACUMULADAS</div>
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#F59E0B', marginTop: '4px' }}>{formatDuration(totalEngine)}</div>
+                    </div>
+                    <div style={{ backgroundColor: '#0B1120', padding: '14px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <div style={{ fontSize: '11px', color: '#9CA3AF' }}>INFRACCIONES DE LA FLOTA</div>
+                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#EF4444', marginTop: '4px' }}>{totalInf} alertas</div>
+                    </div>
+                  </div>
+
+                  {/* 3 Gráficos Visuales en Pantalla */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: '15px' }}>
+                    {/* Gráfico 1: Barras de Kilometraje */}
+                    <div style={{ backgroundColor: '#0B1120', padding: '15px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <h4 style={{ margin: '0 0 12px 0', color: '#60A5FA', fontSize: '13px' }}>📊 Top Productividad (Kilómetros)</h4>
+                      {summaryData.slice(0, 6).map((r, i) => (
+                        <div key={i} style={{ marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#D1D5DB', marginBottom: '3px' }}>
+                            <span><b>{r.deviceName}</b></span>
+                            <span>{r.distanceKm.toFixed(1)} km</span>
+                          </div>
+                          <div style={{ width: '100%', backgroundColor: '#1F2937', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${(r.distanceKm / maxKm) * 100}%`, backgroundColor: '#3B82F6', height: '100%' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Gráfico 2: Barras de Infracciones */}
+                    <div style={{ backgroundColor: '#0B1120', padding: '15px', borderRadius: '8px', border: '1px solid #1F2937' }}>
+                      <h4 style={{ margin: '0 0 12px 0', color: '#F87171', fontSize: '13px' }}>🚨 Ranking de Infracciones Viales</h4>
+                      {[...summaryData].sort((a, b) => b.totalInfractions - a.totalInfractions).slice(0, 6).map((r, i) => (
+                        <div key={i} style={{ marginBottom: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#D1D5DB', marginBottom: '3px' }}>
+                            <span><b>{r.deviceName}</b></span>
+                            <span>{r.totalInfractions} infracciones</span>
+                          </div>
+                          <div style={{ width: '100%', backgroundColor: '#1F2937', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${(r.totalInfractions / maxInf) * 100}%`, backgroundColor: '#EF4444', height: '100%' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Gráfico 3 (NUEVO): Dona de Eficiencia Movimiento vs Ralentí */}
+                    <div style={{ backgroundColor: '#0B1120', padding: '15px', borderRadius: '8px', border: '1px solid #1F2937', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <h4 style={{ margin: '0 0 12px 0', color: '#10B981', fontSize: '13px' }}>🍩 Eficiencia Operativa (Movimiento vs. Ralentí)</h4>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '18px', margin: 'auto 0' }}>
+                        <div style={{
+                          width: '105px',
+                          height: '105px',
+                          borderRadius: '50%',
+                          background: `conic-gradient(#10B981 0% ${productivePct}%, #F59E0B ${productivePct}% 100%)`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}>
+                          <div style={{
+                            width: '68px',
+                            height: '68px',
+                            borderRadius: '50%',
+                            backgroundColor: '#0B1120',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}>
+                            <span style={{ color: '#10B981', fontWeight: 'bold', fontSize: '15px' }}>{productivePct}%</span>
+                            <span style={{ color: '#9CA3AF', fontSize: '9px' }}>Productivo</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '12px' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#10B981', fontWeight: 'bold' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: '#10B981', display: 'inline-block' }} />
+                              En Movimiento ({productivePct}%)
+                            </div>
+                            <div style={{ color: '#D1D5DB', fontSize: '11px', marginLeft: '16px' }}>{formatDuration(totalDriving)}</div>
+                          </div>
+
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#F59E0B', fontWeight: 'bold' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: '#F59E0B', display: 'inline-block' }} />
+                              En Ralentí ({idlePct}%)
+                            </div>
+                            <div style={{ color: '#D1D5DB', fontSize: '11px', marginLeft: '16px' }}>{formatDuration(totalIdle)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{maxHeight: '500px', overflowY: 'auto', overflowX: 'auto'}}>
+              <table style={styles.table}>
+                <thead style={{position:'sticky', top:0, backgroundColor:'#111827', zIndex: 1}}>
+                    <tr style={styles.tableHead}>
+                        <th>Vehículo</th>
+                        <th>Viajes</th>
+                        <th>Distancia</th>
+                        <th>Vel. Máx</th>
+                        <th>Horas Motor</th>
+                        <th>Cond. Neta</th>
+                        <th>Ralentí</th>
+                        <th>Paradas</th>
+                        <th>Máx. Continuo</th>
+                        <th>Fatiga</th>
+                        <th>Excesos (&gt;{speedLimit})</th>
+                        <th>Acel. Bruscas</th>
+                        <th>Fren. Bruscas</th>
+                        <th>Total Infrac.</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  {summaryData.length === 0 ? (
+                    <tr><td colSpan="14" style={styles.emptyText}>Presiona "Analizar Data" para generar la auditoría maestra de toda la flota.</td></tr>
+                  ) : (
+                    summaryData.map((row, index) => {
+                      const isFatigued = (row.maxConsecutiveMs / 3600000) > 4;
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid #1F2937' }}>
+                          <td style={{...styles.td, fontWeight: 'bold', color: '#3B82F6'}}>{row.deviceName}</td>
+                          <td style={{...styles.td, fontWeight: 'bold', color: '#F3F4F6'}}>{row.totalTrips}</td>
+                          <td style={{...styles.td, color: '#10B981', fontWeight: 'bold'}}>{row.distanceKm.toFixed(2)} km</td>
+                          <td style={{...styles.td, color: '#EF4444', fontWeight: 'bold'}}>{row.maxSpeedKmh.toFixed(1)} km/h</td>
+                          <td style={{...styles.td, color: '#F59E0B'}}>{formatDuration(row.engineHoursMs)}</td>
+                          <td style={{...styles.td, color: '#60A5FA'}}>{formatDuration(row.drivingHoursMs)}</td>
+                          <td style={{...styles.td, color: row.idleHoursMs > 0 ? '#F59E0B' : '#9CA3AF'}}>{formatDuration(row.idleHoursMs)}</td>
+                          <td style={styles.td}>{row.stopsCount}</td>
+                          <td style={styles.td}>{formatDuration(row.maxConsecutiveMs)}</td>
+                          <td style={{...styles.td, color: isFatigued ? '#EF4444' : '#10B981', fontWeight: 'bold', fontSize: '11px'}}>
+                            {isFatigued ? '⚠️ Fatiga' : '✅ Óptimo'}
+                          </td>
+                          <td style={{...styles.td, color: row.overspeeds > 0 ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>{row.overspeeds}</td>
+                          <td style={{...styles.td, color: row.harshAccels > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{row.harshAccels}</td>
+                          <td style={{...styles.td, color: row.harshBrakes > 0 ? '#F59E0B' : '#10B981', fontWeight: 'bold'}}>{row.harshBrakes}</td>
+                          <td style={{...styles.td, color: row.totalInfractions > 0 ? '#EF4444' : '#10B981', fontWeight: 'bold'}}>{row.totalInfractions}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {/* 🔥 RENDERIZADO DEL INFORME DE FACTURACIÓN (INDIVIDUAL Y FLOTA) 🔥 */}
         {(reportType === 'billing' || reportType === 'fleet_billing') && (
           <>
             <h3 style={styles.tableTitle}>
@@ -1241,7 +1759,6 @@ export default function Reports({ devices, token }) {
           </>
         )}
         
-        {/* 🔥 RENDERIZADO DE LAS DOS VERSIONES (INDIVIDUAL Y FLOTA MÚLTIPLE) 🔥 */}
         {(reportType === 'monthly_trips' || reportType === 'fleet_monthly_trips') && (
           <>
             <h3 style={styles.tableTitle}>
